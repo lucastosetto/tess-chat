@@ -7,6 +7,7 @@ import { when } from '../time'
 
 type Group = 'pinned' | 'recent' | 'archived'
 type Action = 'pin' | 'rename' | 'archive' | 'delete'
+
 type Changes = Partial<Pick<Conversation, 'title' | 'pinned' | 'archived'>>
 
 const RECENT = 12

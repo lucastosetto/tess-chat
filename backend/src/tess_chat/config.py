@@ -30,7 +30,13 @@ class Settings(BaseSettings):
 
     session_secret: SecretStr = SecretStr("dev-insecure-session-secret-change-me")
     session_ttl_seconds: int = 60 * 60 * 24 * 7
-    auth_dev_mode: bool = False
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: SecretStr | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    email_from: str | None = None
     admin_emails: list[str] = Field(default_factory=list)
 
     gemini_api_key: SecretStr | None = None

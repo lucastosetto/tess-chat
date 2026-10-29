@@ -26,19 +26,20 @@ class MeOut(BaseModel):
     balance: int
 
 
-class DevLoginIn(BaseModel):
-    email: str = Field(max_length=320)
-    name: str = Field(default="", max_length=200)
-
-
 class AuthConfigOut(BaseModel):
-    dev_login: bool
     google_login: bool
+    email_login: bool
+
+
+class EmailLoginIn(BaseModel):
+    email: str = Field(max_length=320)
 
 
 class ConversationOut(BaseModel):
     id: UUID
     title: str
+    model: str | None
+    effort: str | None
     pinned: bool
     archived: bool
     created_at: datetime
@@ -49,6 +50,8 @@ class ConversationOut(BaseModel):
         return cls(
             id=conversation.id,
             title=conversation.title,
+            model=conversation.model,
+            effort=conversation.effort,
             pinned=conversation.pinned_at is not None,
             archived=conversation.archived_at is not None,
             created_at=conversation.created_at,
@@ -105,6 +108,14 @@ class UpdateConversationIn(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     pinned: bool | None = None
     archived: bool | None = None
+    model: str | None = None
+    effort: str | None = None
+
+
+class ModelOut(BaseModel):
+    id: str
+    provider: str
+    label: str
 
 
 class SendMessageIn(BaseModel):

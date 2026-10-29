@@ -45,6 +45,8 @@ class OpenAICompatibleProvider:
             "stream_options": {"include_usage": True},
             **self._extra_body,
         }
+        if request.reasoning_effort:
+            body["reasoning_effort"] = request.reasoning_effort
         headers = {"Authorization": f"Bearer {self._api_key}"}
         usage = TokenUsage()
         try:

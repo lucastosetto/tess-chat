@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select, text
@@ -8,6 +9,7 @@ from tess_chat.adapters.persistence.models import (
     AuditRow,
     ConversationRow,
     LedgerRow,
+    LoginLinkRow,
     MessageRow,
     ModelPricingRow,
     UserRow,
@@ -15,6 +17,7 @@ from tess_chat.adapters.persistence.models import (
 from tess_chat.domain.audit import AuditEvent
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.credits import EntryKind, LedgerEntry, ModelPrice, TokenUsage
+from tess_chat.domain.login_link import LoginLink
 from tess_chat.domain.message import Message, MessageStatus, Role
 from tess_chat.domain.user import Role as UserRole
 from tess_chat.domain.user import User
@@ -45,6 +48,53 @@ class SqlUserRepository:
         await self._session.flush()
 
 
+class SqlLoginLinkRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, link: LoginLink) -> None:
+        self._session.add(
+            LoginLinkRow(
+                id=link.id,
+                email=link.email,
+                token_hash=link.token_hash,
+                created_at=link.created_at,
+                expires_at=link.expires_at,
+                used_at=link.used_at,
+            )
+        )
+        await self._session.flush()
+
+    async def get_by_hash(self, token_hash: str) -> LoginLink | None:
+        row = await self._session.scalar(
+            select(LoginLinkRow).where(LoginLinkRow.token_hash == token_hash).with_for_update()
+        )
+        if row is None:
+            return None
+        return LoginLink(
+            id=row.id,
+            email=row.email,
+            token_hash=row.token_hash,
+            created_at=row.created_at,
+            expires_at=row.expires_at,
+            used_at=row.used_at,
+        )
+
+    async def count_since(self, email: str, since: datetime) -> int:
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(LoginLinkRow)
+            .where(LoginLinkRow.email == email, LoginLinkRow.created_at >= since)
+        )
+        return count or 0
+
+    async def update(self, link: LoginLink) -> None:
+        row = await self._session.get(LoginLinkRow, link.id)
+        if row is not None:
+            row.used_at = link.used_at
+            await self._session.flush()
+
+
 class SqlConversationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -69,6 +119,8 @@ class SqlConversationRepository:
                 title=conversation.title,
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
+                model=conversation.model,
+                effort=conversation.effort,
                 pinned_at=conversation.pinned_at,
                 archived_at=conversation.archived_at,
                 deleted_at=conversation.deleted_at,
@@ -82,6 +134,8 @@ class SqlConversationRepository:
             return
         row.title = conversation.title
         row.updated_at = conversation.updated_at
+        row.model = conversation.model
+        row.effort = conversation.effort
         row.pinned_at = conversation.pinned_at
         row.archived_at = conversation.archived_at
         row.deleted_at = conversation.deleted_at
@@ -240,6 +294,8 @@ def _conversation(row: ConversationRow) -> Conversation:
         title=row.title,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        model=row.model,
+        effort=row.effort,
         pinned_at=row.pinned_at,
         archived_at=row.archived_at,
         deleted_at=row.deleted_at,

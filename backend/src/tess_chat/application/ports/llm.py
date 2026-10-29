@@ -16,6 +16,8 @@ class LLMRequest:
     turns: Sequence[ChatTurn]
     max_output_tokens: int
     has_media: bool = False
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,16 @@ class Completion:
 
 
 LLMChunk = TextDelta | Completion
+
+EFFORTS = ("low", "medium", "high")
+DEFAULT_EFFORT = "medium"
+
+
+@dataclass(frozen=True)
+class ModelOption:
+    id: str
+    provider: str
+    label: str
 
 
 class LLMProvider(Protocol):

@@ -5,8 +5,10 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 
+from tess_chat.adapters.auth.google import GoogleOAuth
 from tess_chat.adapters.auth.session import SessionCodec
 from tess_chat.adapters.clock import SystemClock
+from tess_chat.adapters.email.smtp import LogEmailSender, SmtpEmailSender
 from tess_chat.adapters.events.bus import AuditSubscriber, InProcessEventBus, LogSubscriber
 from tess_chat.adapters.http.app import create_app
 from tess_chat.adapters.http.container import Container
@@ -15,9 +17,15 @@ from tess_chat.adapters.llm.fallback import FallbackLLMProvider
 from tess_chat.adapters.llm.openai_compatible import OpenAICompatibleProvider
 from tess_chat.adapters.persistence.database import create_engine, session_factory
 from tess_chat.adapters.persistence.unit_of_work import SqlUnitOfWorkFactory
-from tess_chat.application.ports.llm import LLMProvider
+from tess_chat.application.ports.email import EmailSender
+from tess_chat.application.ports.llm import LLMProvider, ModelOption
 from tess_chat.application.ports.unit_of_work import UnitOfWorkFactory
-from tess_chat.application.use_cases.auth import GetCurrentUser, SignIn
+from tess_chat.application.use_cases.auth import (
+    GetCurrentUser,
+    SendLoginLink,
+    SignIn,
+    UseLoginLink,
+)
 from tess_chat.application.use_cases.conversations import (
     DeleteConversation,
     GetConversation,
@@ -29,6 +37,13 @@ from tess_chat.application.use_cases.send_message import SendMessage
 from tess_chat.application.use_cases.usage import GetBalance, ListActivity
 from tess_chat.config import Settings, get_settings
 from tess_chat.log_config import configure_logging
+
+MODEL_LABELS = {"gemini-3.5-flash": "Gemini 3.5 Flash", "openai/gpt-oss-120b": "GPT-OSS 120B"}
+
+
+def model_options(llm: LLMProvider) -> list[ModelOption]:
+    providers = llm.providers if isinstance(llm, FallbackLLMProvider) else [llm]
+    return [ModelOption(p.model, p.name, MODEL_LABELS.get(p.model, p.model)) for p in providers]
 
 
 def build_llm(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
@@ -62,31 +77,64 @@ def build_llm(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
     return FallbackLLMProvider(providers)
 
 
-def build_container(settings: Settings, uow: UnitOfWorkFactory, llm: LLMProvider) -> Container:
+def build_google(settings: Settings, client: httpx.AsyncClient) -> GoogleOAuth | None:
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+        return None
+    return GoogleOAuth(
+        settings.google_oauth_client_id,
+        settings.google_oauth_client_secret.get_secret_value(),
+        client,
+    )
+
+
+def build_email(settings: Settings) -> EmailSender | None:
+    if settings.smtp_host and settings.smtp_username and settings.smtp_password:
+        return SmtpEmailSender(
+            settings.smtp_host,
+            settings.smtp_port,
+            settings.smtp_username,
+            settings.smtp_password.get_secret_value(),
+            settings.email_from or settings.smtp_username,
+        )
+    return None if settings.is_production else LogEmailSender()
+
+
+def build_container(
+    settings: Settings,
+    uow: UnitOfWorkFactory,
+    llm: LLMProvider,
+    google: GoogleOAuth | None = None,
+    email: EmailSender | None = None,
+) -> Container:
     clock = SystemClock()
+    sign_in = SignIn(
+        uow,
+        clock,
+        settings.default_credit_grant,
+        frozenset(e.strip().lower() for e in settings.admin_emails),
+    )
+    models = model_options(llm)
     return Container(
         sessions=SessionCodec(
             settings.session_secret.get_secret_value(), settings.session_ttl_seconds
         ),
         secure_cookies=settings.is_production,
-        auth_dev_mode=settings.auth_dev_mode,
-        sign_in=SignIn(
-            uow,
-            clock,
-            settings.default_credit_grant,
-            frozenset(e.strip().lower() for e in settings.admin_emails),
-        ),
+        google=google,
+        sign_in=sign_in,
+        send_login_link=SendLoginLink(uow, clock, email) if email else None,
+        use_login_link=UseLoginLink(uow, clock, sign_in),
         current_user=GetCurrentUser(uow),
         start_conversation=StartConversation(uow, clock),
         list_conversations=ListConversations(uow),
         get_conversation=GetConversation(uow),
-        update_conversation=UpdateConversation(uow, clock),
+        update_conversation=UpdateConversation(uow, clock, models),
         delete_conversation=DeleteConversation(uow, clock),
         send_message=SendMessage(
             uow, clock, llm, settings.max_output_tokens, settings.global_credit_cap
         ),
         get_balance=GetBalance(uow),
         list_activity=ListActivity(uow),
+        models=models,
     )
 
 
@@ -103,7 +151,13 @@ def build_app(settings: Settings | None = None) -> FastAPI:
             settings.llm_timeout_seconds, connect=10.0, read=settings.llm_read_timeout_seconds
         )
     )
-    container = build_container(settings, uow, build_llm(settings, client))
+    container = build_container(
+        settings,
+        uow,
+        build_llm(settings, client),
+        build_google(settings, client),
+        build_email(settings),
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

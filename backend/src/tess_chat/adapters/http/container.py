@@ -1,7 +1,15 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+from tess_chat.adapters.auth.google import GoogleOAuth
 from tess_chat.adapters.auth.session import SessionCodec
-from tess_chat.application.use_cases.auth import GetCurrentUser, SignIn
+from tess_chat.application.ports.llm import ModelOption
+from tess_chat.application.use_cases.auth import (
+    GetCurrentUser,
+    SendLoginLink,
+    SignIn,
+    UseLoginLink,
+)
 from tess_chat.application.use_cases.conversations import (
     DeleteConversation,
     GetConversation,
@@ -17,8 +25,10 @@ from tess_chat.application.use_cases.usage import GetBalance, ListActivity
 class Container:
     sessions: SessionCodec
     secure_cookies: bool
-    auth_dev_mode: bool
+    google: GoogleOAuth | None
     sign_in: SignIn
+    send_login_link: SendLoginLink | None
+    use_login_link: UseLoginLink
     current_user: GetCurrentUser
     start_conversation: StartConversation
     list_conversations: ListConversations
@@ -28,3 +38,4 @@ class Container:
     send_message: SendMessage
     get_balance: GetBalance
     list_activity: ListActivity
+    models: Sequence[ModelOption]

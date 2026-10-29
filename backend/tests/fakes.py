@@ -9,6 +9,7 @@ from tess_chat.domain.audit import AuditEvent
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.credits import EntryKind, LedgerEntry, ModelPrice
 from tess_chat.domain.events import DomainEvent
+from tess_chat.domain.login_link import LoginLink
 from tess_chat.domain.message import Message
 from tess_chat.domain.user import User
 
@@ -25,6 +26,7 @@ class FixedClock:
 class Store:
     def __init__(self) -> None:
         self.users: dict[UUID, User] = {}
+        self.login_links: list[LoginLink] = []
         self.conversations: dict[UUID, Conversation] = {}
         self.messages: list[Message] = []
         self.ledger: list[LedgerEntry] = []
@@ -44,6 +46,23 @@ class MemUsers:
 
     async def add(self, user: User) -> None:
         self.s.users[user.id] = user
+
+
+class MemLoginLinks:
+    def __init__(self, store: Store) -> None:
+        self.s = store
+
+    async def add(self, link: LoginLink) -> None:
+        self.s.login_links.append(link)
+
+    async def get_by_hash(self, token_hash: str) -> LoginLink | None:
+        return next((x for x in self.s.login_links if x.token_hash == token_hash), None)
+
+    async def count_since(self, email: str, since: datetime) -> int:
+        return sum(1 for x in self.s.login_links if x.email == email and x.created_at >= since)
+
+    async def update(self, link: LoginLink) -> None:
+        return None
 
 
 class MemConversations:
@@ -116,6 +135,7 @@ class MemAudit:
 class MemUnitOfWork:
     def __init__(self, store: Store, bus: InProcessEventBus) -> None:
         self.users = MemUsers(store)
+        self.login_links = MemLoginLinks(store)
         self.conversations = MemConversations(store)
         self.messages = MemMessages(store)
         self.ledger = MemLedger(store)

@@ -12,15 +12,20 @@ class FallbackLLMProvider:
     def __init__(self, providers: Sequence[LLMProvider]) -> None:
         if not providers:
             raise ValueError("at least one provider is required")
-        self._providers = list(providers)
-        self.name = self._providers[0].name
-        self.model = self._providers[0].model
-        self.supports_media = self._providers[0].supports_media
+        self.providers = list(providers)
+        self.name = self.providers[0].name
+        self.model = self.providers[0].model
+        self.supports_media = self.providers[0].supports_media
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMChunk]:
-        candidates = [
-            p for p in self._providers if p.supports_media or not request.has_media
-        ] or self._providers[:1]
+        if request.model:
+            candidates = [p for p in self.providers if p.model == request.model]
+            if not candidates:
+                raise LLMUnavailable(f"model {request.model} is not available")
+        else:
+            candidates = [
+                p for p in self.providers if p.supports_media or not request.has_media
+            ] or self.providers[:1]
         last_error: LLMUnavailable | None = None
         for index, provider in enumerate(candidates):
             emitted = False

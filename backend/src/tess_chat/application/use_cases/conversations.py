@@ -3,10 +3,11 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from tess_chat.application.ports.clock import Clock
+from tess_chat.application.ports.llm import EFFORTS, ModelOption
 from tess_chat.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from tess_chat.domain import events
 from tess_chat.domain.conversation import Conversation
-from tess_chat.domain.errors import NotFound
+from tess_chat.domain.errors import InvalidInput, NotFound
 from tess_chat.domain.message import Message
 
 
@@ -62,6 +63,7 @@ class GetConversation:
 class UpdateConversation:
     uow: UnitOfWorkFactory
     clock: Clock
+    models: Sequence[ModelOption]
 
     async def execute(
         self,
@@ -70,7 +72,13 @@ class UpdateConversation:
         title: str | None = None,
         pinned: bool | None = None,
         archived: bool | None = None,
+        model: str | None = None,
+        effort: str | None = None,
     ) -> Conversation:
+        if model and model not in {m.id for m in self.models}:
+            raise InvalidInput(f"unknown model {model}")
+        if effort and effort not in EFFORTS:
+            raise InvalidInput(f"unknown effort {effort}")
         async with self.uow() as uow:
             conversation = await load_owned(uow, user_id, conversation_id)
             now = self.clock.now()
@@ -94,6 +102,23 @@ class UpdateConversation:
                 conversation.set_pinned(pinned, now)
                 action = "pinned" if pinned else "unpinned"
                 uow.record(events.conversation_event(action, user_id, conversation.id))
+            if model is not None or effort is not None:
+                next_model = conversation.model if model is None else model
+                next_effort = conversation.effort if effort is None else effort
+                if (next_model or None, next_effort or None) != (
+                    conversation.model,
+                    conversation.effort,
+                ):
+                    conversation.choose_model(next_model, next_effort)
+                    uow.record(
+                        events.conversation_event(
+                            "model_changed",
+                            user_id,
+                            conversation.id,
+                            model=conversation.model,
+                            effort=conversation.effort,
+                        )
+                    )
             await uow.conversations.update(conversation)
             await uow.commit()
             return conversation

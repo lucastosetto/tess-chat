@@ -36,6 +36,16 @@ export const Stop = () => (
   </Icon>
 )
 export const Copy = ({ size }: P) => <Icon size={size}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></Icon>
+export const ChevronDown = () => <Icon size={11}><path d="m6 9 6 6 6-6" /></Icon>
+export const Check = () => <Icon size={14}><path d="m5 12 5 5 9-10" /></Icon>
+export const Google = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="#4285F4" d="M22.6 12.3c0-.8-.1-1.5-.2-2.3H12v4.3h5.9a5 5 0 0 1-2.2 3.3v2.8h3.6c2.1-1.9 3.3-4.8 3.3-8.1z" />
+    <path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.6-2.8c-1 .7-2.2 1.1-3.7 1.1-2.9 0-5.3-1.9-6.2-4.5H2.1v2.9A11 11 0 0 0 12 23z" />
+    <path fill="#FBBC05" d="M5.8 14.1a6.6 6.6 0 0 1 0-4.2V7H2.1a11 11 0 0 0 0 9.9z" />
+    <path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2A11 11 0 0 0 2.1 7l3.7 2.9C6.7 7.3 9.1 5.4 12 5.4z" />
+  </svg>
+)
 export const Chevron = () => <Icon><path d="m9 6 6 6-6 6" /></Icon>
 export const ArrowDown = () => <Icon size={13}><path d="M12 5v14M5 12l7 7 7-7" /></Icon>
 export const LogOut = ({ size }: P) => <Icon size={size}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></Icon>

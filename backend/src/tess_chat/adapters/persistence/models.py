@@ -24,6 +24,18 @@ class UserRow(Base):
     created_at: Mapped[datetime]
 
 
+class LoginLinkRow(Base):
+    __tablename__ = "login_links"
+    __table_args__ = (Index("ix_login_links_email_created", "email", "created_at"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime]
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None]
+
+
 class ConversationRow(Base):
     __tablename__ = "conversations"
     __table_args__ = (Index("ix_conversations_owner_updated", "owner_id", "updated_at"),)
@@ -33,6 +45,8 @@ class ConversationRow(Base):
     title: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
+    model: Mapped[str | None] = mapped_column(String(100))
+    effort: Mapped[str | None] = mapped_column(String(20))
     pinned_at: Mapped[datetime | None]
     archived_at: Mapped[datetime | None]
     deleted_at: Mapped[datetime | None]

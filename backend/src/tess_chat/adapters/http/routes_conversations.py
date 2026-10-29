@@ -12,6 +12,7 @@ from tess_chat.adapters.http.schemas import (
     ConversationOut,
     CreateConversationIn,
     MessageOut,
+    ModelOut,
     SendMessageIn,
     UpdateConversationIn,
 )
@@ -22,10 +23,16 @@ from tess_chat.application.use_cases.send_message import (
     AssistantFailed,
     ChatStreamEvent,
     MessageAccepted,
+    TitleGenerated,
 )
 
 log = structlog.get_logger()
 router = APIRouter(prefix="/api", tags=["conversations"])
+
+
+@router.get("/models")
+async def list_models(_: CurrentUser, container: ContainerDep) -> list[ModelOut]:
+    return [ModelOut(id=m.id, provider=m.provider, label=m.label) for m in container.models]
 
 
 @router.get("/conversations")
@@ -56,7 +63,13 @@ async def update_conversation(
     conversation_id: UUID, body: UpdateConversationIn, user: CurrentUser, container: ContainerDep
 ) -> ConversationOut:
     conversation = await container.update_conversation.execute(
-        user.id, conversation_id, body.title, body.pinned, body.archived
+        user.id,
+        conversation_id,
+        body.title,
+        body.pinned,
+        body.archived,
+        body.model,
+        body.effort,
     )
     return ConversationOut.of(conversation)
 
@@ -116,6 +129,8 @@ def _encode(event: ChatStreamEvent) -> str:
                     "balance": balance,
                 },
             )
+        case TitleGenerated(title, cost, balance):
+            return format_event("title", {"title": title, "cost": cost, "balance": balance})
         case AssistantFailed(message, code, balance):
             return format_event(
                 "failed",

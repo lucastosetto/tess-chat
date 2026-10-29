@@ -15,6 +15,8 @@ class Conversation:
     title: str
     created_at: datetime
     updated_at: datetime
+    model: str | None = None
+    effort: str | None = None
     pinned_at: datetime | None = None
     archived_at: datetime | None = None
     deleted_at: datetime | None = None
@@ -36,6 +38,10 @@ class Conversation:
     def rename(self, title: str, now: datetime) -> None:
         self.title = _clean_title(title)
         self.updated_at = now
+
+    def choose_model(self, model: str | None, effort: str | None) -> None:
+        self.model = model or None
+        self.effort = effort or None
 
     def set_pinned(self, pinned: bool, now: datetime) -> None:
         self.pinned_at = now if pinned else None

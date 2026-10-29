@@ -1,10 +1,12 @@
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
 from tess_chat.domain.audit import AuditEvent
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.credits import LedgerEntry, ModelPrice
+from tess_chat.domain.login_link import LoginLink
 from tess_chat.domain.message import Message
 from tess_chat.domain.user import User
 
@@ -13,6 +15,13 @@ class UserRepository(Protocol):
     async def get(self, user_id: UUID) -> User | None: ...
     async def get_by_email(self, email: str) -> User | None: ...
     async def add(self, user: User) -> None: ...
+
+
+class LoginLinkRepository(Protocol):
+    async def add(self, link: LoginLink) -> None: ...
+    async def get_by_hash(self, token_hash: str) -> LoginLink | None: ...
+    async def count_since(self, email: str, since: datetime) -> int: ...
+    async def update(self, link: LoginLink) -> None: ...
 
 
 class ConversationRepository(Protocol):

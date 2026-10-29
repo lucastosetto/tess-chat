@@ -12,6 +12,7 @@ from tess_chat.application.use_cases.send_message import (
     AssistantFailed,
     MessageAccepted,
     SendMessage,
+    TitleGenerated,
 )
 from tess_chat.domain.credits import ModelPrice
 from tess_chat.domain.errors import InsufficientCredits, LLMUnavailable
@@ -54,17 +55,23 @@ async def test_streams_reply_settles_credits_and_audits() -> None:
     assert "".join(e.text for e in events if isinstance(e, AssistantDelta)).strip() == (
         "hello there friend"
     )
-    done = events[-1]
+    done, titled = events[-2], events[-1]
     assert isinstance(done, AssistantCompleted)
+    assert isinstance(titled, TitleGenerated)
+    assert titled.title == "hello there friend"
+    assert titled.balance == done.balance - titled.cost
     assert done.balance == 100_000 - done.cost
     assert done.message.provider == "fake"
     actions = [e.action for e in uow.store.audit]
-    assert actions[-4:] == [
+    assert actions[-6:] == [
         "message.sent",
         "credits.reserved",
         "message.completed",
         "credits.settled",
+        "conversation.titled",
+        "credits.settled",
     ]
+    assert llm.requests[1].reasoning_effort == "low"
     assert llm.requests[0].turns[0].role == "system"
 
 
@@ -74,7 +81,7 @@ async def test_history_is_sent_on_followup() -> None:
     use_case = SendMessage(uow, clock, llm, 100, 10_000_000)
     _ = [e async for e in use_case.execute(user.id, conversation.id, "first")]
     _ = [e async for e in use_case.execute(user.id, conversation.id, "second")]
-    roles = [t.role for t in llm.requests[1].turns]
+    roles = [t.role for t in llm.requests[2].turns]
     assert roles == ["system", "user", "assistant", "user"]
 
 

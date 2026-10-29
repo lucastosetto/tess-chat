@@ -38,7 +38,8 @@ Monday 11/02 12:00 (confirmed). Everything (deployed app, docs, video) done by S
 | database-url | set (Neon direct, no pooler) |
 | session-secret | set |
 | anthropic-api-key | empty (optional) |
-| google-oauth-client-id / -secret | empty, set up at end of Day 1 |
+| google-oauth-client-id / -secret | set |
+| smtp-password | set (Gmail app password for sign-in links) |
 
 ## Neon
 
@@ -61,8 +62,12 @@ Monday 11/02 12:00 (confirmed). Everything (deployed app, docs, video) done by S
 - Dockerfile (SPA served by the API), `.github/workflows/ci.yml` (checks, build, migrate job, deploy).
 - Terraform: `auth_dev_mode` and `unset_secrets` variables added; `terraform.tfvars` sets `github_repo`, `deploy_service = true`, `auth_dev_mode = true`.
 
+## Day 2 progress (10/29)
+
+- Model picker (Auto or a fixed model, which skips the fallback) and reasoning effort per conversation; ACP-style pickers.
+- Auto-title by the LLM after the first reply, charged in credits, streamed as an SSE `title` event.
+- Sign-in: Google OAuth (code flow, state cookie, verified email only) and email magic link (single use, 15 min, hashed token, 5 per 15 min per email, SMTP via Gmail). Dev login removed.
+
 ## Next
 
-- Apply `infra/main` (WIF + Cloud Run), push, verify the deploy.
-- Google OAuth (console), then set `auth_dev_mode = false`.
-- Day 1 items 9 (model picker, auto-title by LLM) moved to Day 2.
+- Phase 2 items from `docs/PLAN.md`.

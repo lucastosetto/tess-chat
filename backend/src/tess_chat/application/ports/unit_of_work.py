@@ -5,6 +5,7 @@ from tess_chat.application.ports.repositories import (
     AuditRepository,
     ConversationRepository,
     LedgerRepository,
+    LoginLinkRepository,
     MessageRepository,
     PricingRepository,
     UserRepository,
@@ -14,6 +15,7 @@ from tess_chat.domain.events import DomainEvent
 
 class UnitOfWork(Protocol):
     users: UserRepository
+    login_links: LoginLinkRepository
     conversations: ConversationRepository
     messages: MessageRepository
     ledger: LedgerRepository

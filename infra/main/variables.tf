@@ -29,6 +29,7 @@ variable "secret_names" {
     "google-oauth-client-id",
     "google-oauth-client-secret",
     "session-secret",
+    "smtp-password",
   ]
 }
 
@@ -37,14 +38,14 @@ variable "deploy_service" {
   default = false
 }
 
-variable "auth_dev_mode" {
-  type        = bool
-  default     = false
-  description = "Enables the email-only dev login; only until Google OAuth is configured"
-}
-
 variable "unset_secrets" {
   type        = list(string)
-  default     = ["anthropic-api-key", "google-oauth-client-id", "google-oauth-client-secret"]
+  default     = ["anthropic-api-key"]
   description = "Secrets without a version yet; not mapped into Cloud Run"
+}
+
+variable "smtp_username" {
+  type        = string
+  default     = ""
+  description = "SMTP login for sign-in emails (Gmail address with an app password)"
 }

@@ -50,3 +50,14 @@ async def test_skips_text_only_providers_for_media() -> None:
     request = LLMRequest(turns=REQUEST.turns, max_output_tokens=10, has_media=True)
     with pytest.raises(LLMUnavailable):
         _ = [c async for c in llm.stream(request)]
+
+
+async def test_chosen_model_skips_fallback() -> None:
+    first = FakeLLMProvider(name="a", model="m-a", reply="from a")
+    second = FakeLLMProvider(name="b", model="m-b", reply="from b")
+    fallback = FallbackLLMProvider([first, second])
+    request = LLMRequest(turns=[ChatTurn("user", "hi")], max_output_tokens=10, model="m-b")
+    chunks = [c async for c in fallback.stream(request)]
+    assert isinstance(chunks[-1], Completion) and chunks[-1].provider == "b"
+    with pytest.raises(LLMUnavailable):
+        _ = [c async for c in fallback.stream(LLMRequest(REQUEST.turns, 10, model="x"))]

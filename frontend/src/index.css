@@ -236,6 +236,18 @@ dialog h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
 .composer textarea { display: block; width: 100%; border: 0; background: none; resize: none; min-height: 48px; max-height: 240px; outline: none; box-shadow: none; font: 14.5px/1.6 "Instrument Sans", -apple-system, sans-serif; padding: 2px 6px; }
 .composer textarea::placeholder { color: var(--text-4); }
 .composer .bar { display: flex; align-items: center; gap: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid transparent; border-radius: 7px; padding: 3px 8px; font-size: 12px; color: var(--text-2); max-width: 240px; }
+.chip:hover { background: var(--hover); color: var(--text); }
+.chip:disabled { opacity: .5; cursor: default; }
+.menu .check { margin-left: auto; color: var(--text-3); display: inline-flex; }
+.pk-wrap { position: relative; display: inline-flex; min-width: 0; }
+.pk svg { width: 11px; height: 11px; flex: none; color: var(--text-3); }
+.pk[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.pk[data-tip] { position: relative; }
+.pk[data-tip]:hover::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); z-index: 6; background: var(--solid); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; white-space: nowrap; box-shadow: var(--pop-shadow); pointer-events: none; }
+.pk[aria-expanded="true"]::after { display: none; }
+.pk-menu { bottom: calc(100% + 6px); left: 0; min-width: 190px; }
+.pk-menu button[aria-selected="true"] { font-weight: 500; }
 .status { flex: 1; min-width: 0; font-size: 12px; color: var(--text-3); padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status.err { color: var(--danger); }
 .sendi { width: 30px; height: 30px; padding: 0; justify-content: center; border-radius: 8px; flex: none; background: none; border: 0; box-shadow: none; color: var(--text-2); display: inline-flex; align-items: center; }
@@ -276,3 +288,9 @@ dialog h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
   .sugg { grid-template-columns: 1fr; }
   .hint { display: none; }
 }
+.login-card .b.google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; border: 1px solid var(--line-2); background: var(--solid); color: var(--text); text-decoration: none; }
+.login-card .b.google:hover { background: var(--hover); }
+.login-card .or { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 12px; margin: 14px 0; }
+.login-card .or::before, .login-card .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.login-card .sent b { color: var(--text); font-weight: 500; }
+.login-card .link { background: none; border: 0; padding: 0; color: var(--text); text-decoration: underline; cursor: pointer; font: inherit; }

@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, ApiError, streamMessage, type Me, type Message } from '../api'
+import { Picker } from './Picker'
+import { api, ApiError, streamMessage, type Conversation, type Me, type Message } from '../api'
 import { ArrowDown, Chevron, Copy, LogoMark, NewChat, Send, SidebarIcon, Stop } from '../icons'
 import { renderMarkdown } from '../markdown'
 import { when } from '../time'
@@ -23,6 +24,12 @@ function contextWindow(model: string | null): number {
   return model && /gemini/i.test(model) ? 1_048_576 : 131_072
 }
 
+const EFFORTS = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+]
+
 export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -34,6 +41,8 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   const [liveTitle, setLiveTitle] = useState<string | undefined>()
   const [spent, setSpent] = useState<Record<string, number>>({})
   const [atBottom, setAtBottom] = useState(true)
+  const [pick, setPick] = useState({ model: '', effort: '' })
+  const models = useQuery({ queryKey: ['models'], queryFn: api.models, staleTime: Infinity })
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   const abort = useRef<AbortController | null>(null)
@@ -76,6 +85,16 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
     input.current?.focus()
   }, [activeId])
 
+  const saved = detail.data?.conversation
+  const choice = activeId && saved ? { model: saved.model ?? '', effort: saved.effort ?? '' } : pick
+  const choose = (next: { model: string; effort: string }) => {
+    if (!activeId) return setPick(next)
+    queryClient.setQueryData<{ conversation: Conversation; messages: Message[] }>(['conversation', activeId], (d) =>
+      d ? { ...d, conversation: { ...d.conversation, model: next.model || null, effort: next.effort || null } } : d,
+    )
+    void api.update(activeId, next).catch((err) => setError(describe(err)))
+  }
+
   const setBalance = (next: number) =>
     queryClient.setQueryData<Me>(['me'], (me) => (me ? { ...me, balance: next } : me))
 
@@ -94,6 +113,7 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
       if (!id) {
         const conversation = await api.createConversation()
         id = conversation.id
+        if (pick.model || pick.effort) await api.update(id, pick)
         setActiveId(id)
       }
       const target = id
@@ -112,6 +132,12 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
             setMessages((current) => [...current, message])
             setSpent((all) => ({ ...all, [target]: (all[target] ?? 0) + cost }))
             setBalance(next)
+          },
+          title: ({ title: generated, cost, balance: next }) => {
+            setLiveTitle(generated)
+            setBalance(next)
+            setSpent((all) => ({ ...all, [target]: (all[target] ?? 0) + cost }))
+            queryClient.invalidateQueries({ queryKey: ['conversations'] })
           },
           failed: ({ message, balance: next }) => {
             setMessages((current) => [...current, message])
@@ -255,6 +281,21 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
               aria-label="Message"
             />
             <div className="bar">
+              <Picker
+                label="Model"
+                value={choice.model}
+                disabled={streaming !== null}
+                options={[{ value: '', label: 'Auto' }, ...(models.data ?? []).map((m) => ({ value: m.id, label: m.label }))]}
+                onChange={(model) => choose({ ...choice, model })}
+              />
+              <Picker
+                label="Effort"
+                value={choice.effort}
+                fallback="medium"
+                disabled={streaming !== null}
+                options={EFFORTS}
+                onChange={(effort) => choose({ ...choice, effort })}
+              />
               <span className={`status ${error ? 'err' : ''}`}>
                 {error ?? (streaming !== null ? 'Streaming…' : '')}
               </span>

@@ -42,9 +42,13 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "GCP_PROJECT_ID"
         value = var.project_id
       }
-      env {
-        name  = "AUTH_DEV_MODE"
-        value = tostring(var.auth_dev_mode)
+
+      dynamic "env" {
+        for_each = var.smtp_username == "" ? {} : { SMTP_HOST = "smtp.gmail.com", SMTP_USERNAME = var.smtp_username }
+        content {
+          name  = env.key
+          value = env.value
+        }
       }
 
       dynamic "env" {

@@ -7,6 +7,7 @@ from tess_chat.adapters.persistence.repositories import (
     SqlAuditRepository,
     SqlConversationRepository,
     SqlLedgerRepository,
+    SqlLoginLinkRepository,
     SqlMessageRepository,
     SqlPricingRepository,
     SqlUserRepository,
@@ -16,6 +17,7 @@ from tess_chat.application.ports.repositories import (
     AuditRepository,
     ConversationRepository,
     LedgerRepository,
+    LoginLinkRepository,
     MessageRepository,
     PricingRepository,
     UserRepository,
@@ -26,6 +28,7 @@ from tess_chat.domain.events import DomainEvent
 
 class SqlUnitOfWork:
     users: UserRepository
+    login_links: LoginLinkRepository
     conversations: ConversationRepository
     messages: MessageRepository
     ledger: LedgerRepository
@@ -40,6 +43,7 @@ class SqlUnitOfWork:
     async def __aenter__(self) -> Self:
         self._session = self._sessions()
         self.users = SqlUserRepository(self._session)
+        self.login_links = SqlLoginLinkRepository(self._session)
         self.conversations = SqlConversationRepository(self._session)
         self.messages = SqlMessageRepository(self._session)
         self.ledger = SqlLedgerRepository(self._session)

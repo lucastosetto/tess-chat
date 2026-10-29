@@ -3,6 +3,8 @@ export type Me = { user: User; balance: number }
 export type Conversation = {
   id: string
   title: string
+  model: string | null
+  effort: string | null
   pinned: boolean
   archived: boolean
   created_at: string
@@ -21,7 +23,13 @@ export type Message = {
   created_at: string
 }
 export type ConversationDetail = { conversation: Conversation; messages: Message[] }
-export type AuthConfig = { dev_login: boolean; google_login: boolean }
+export type ModelOption = { id: string; provider: string; label: string }
+export type AuthConfig = { google_login: boolean; email_login: boolean }
+
+export type ConversationChanges = Partial<Pick<Conversation, 'title' | 'pinned' | 'archived'>> & {
+  model?: string
+  effort?: string
+}
 
 export class ApiError extends Error {
   status: number
@@ -49,14 +57,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   authConfig: () => request<AuthConfig>('/api/auth/config'),
   me: () => request<Me>('/api/auth/me'),
-  devLogin: (email: string, name: string) =>
-    request<Me>('/api/auth/dev-login', { method: 'POST', body: JSON.stringify({ email, name }) }),
+  emailLink: (email: string) =>
+    request<void>('/api/auth/email', { method: 'POST', body: JSON.stringify({ email }) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
   conversations: () => request<Conversation[]>('/api/conversations'),
   createConversation: () =>
     request<Conversation>('/api/conversations', { method: 'POST', body: '{}' }),
   conversation: (id: string) => request<ConversationDetail>(`/api/conversations/${id}`),
-  update: (id: string, changes: Partial<Pick<Conversation, 'title' | 'pinned' | 'archived'>>) =>
+  models: () => request<ModelOption[]>('/api/models'),
+  update: (id: string, changes: ConversationChanges) =>
     request<Conversation>(`/api/conversations/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(changes),
@@ -68,6 +77,7 @@ export type StreamHandlers = {
   accepted: (data: { message: Message; title: string }) => void
   delta: (data: { text: string }) => void
   completed: (data: { message: Message; cost: number; balance: number }) => void
+  title: (data: { title: string; cost: number; balance: number }) => void
   failed: (data: { message: Message; code: string; balance: number }) => void
   error: (data: { code: string }) => void
 }
