@@ -52,6 +52,10 @@ def test_conversation_visibility_and_rename() -> None:
     assert conversation.title == DEFAULT_TITLE
     conversation.rename("  Trip   plans ", NOW)
     assert conversation.title == "Trip plans"
+    conversation.set_pinned(True, NOW)
+    assert conversation.pinned_at == NOW
+    conversation.set_archived(True, NOW)
+    assert conversation.archived_at == NOW and conversation.pinned_at is None
     with pytest.raises(NotFound):
         conversation.ensure_visible_to(uuid4())
     conversation.delete(NOW)

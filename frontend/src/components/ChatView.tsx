@@ -2,9 +2,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, streamMessage, type Me, type Message } from '../api'
-import { Chevron, Copy, LogoMark, Menu, Send, Stop } from '../icons'
+import { ArrowDown, Chevron, Copy, LogoMark, NewChat, Send, SidebarIcon, Stop } from '../icons'
 import { renderMarkdown } from '../markdown'
-import { ago } from '../time'
+import { when } from '../time'
 
 const SUGGESTIONS = [
   { title: 'Explain a concept', prompt: 'Explain how HTTPS works, step by step, in plain words.' },
@@ -15,11 +15,15 @@ const SUGGESTIONS = [
 type Props = {
   conversationId: string | null
   title?: string
-  balance: number
   onOpenSide: () => void
+  onNew: () => void
 }
 
-export function ChatView({ conversationId, title, balance, onOpenSide }: Props) {
+function contextWindow(model: string | null): number {
+  return model && /gemini/i.test(model) ? 1_048_576 : 131_072
+}
+
+export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState(conversationId)
@@ -28,6 +32,8 @@ export function ChatView({ conversationId, title, balance, onOpenSide }: Props) 
   const [streaming, setStreaming] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [liveTitle, setLiveTitle] = useState<string | undefined>()
+  const [spent, setSpent] = useState<Record<string, number>>({})
+  const [atBottom, setAtBottom] = useState(true)
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   const abort = useRef<AbortController | null>(null)
@@ -51,8 +57,13 @@ export function ChatView({ conversationId, title, balance, onOpenSide }: Props) 
 
   useLayoutEffect(() => {
     const el = scroller.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages, streaming])
+    if (el && atBottom) el.scrollTop = el.scrollHeight
+  }, [messages, streaming, atBottom])
+
+  const toBottom = () => {
+    const el = scroller.current
+    el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }
 
   useLayoutEffect(() => {
     const el = input.current
@@ -75,6 +86,7 @@ export function ChatView({ conversationId, title, balance, onOpenSide }: Props) 
     setDraft('')
     setError(null)
     setStreaming('')
+    setAtBottom(true)
     const controller = new AbortController()
     abort.current = controller
     try {
@@ -96,8 +108,9 @@ export function ChatView({ conversationId, title, balance, onOpenSide }: Props) 
             queryClient.invalidateQueries({ queryKey: ['conversations'] })
           },
           delta: ({ text: chunk }) => setStreaming((current) => (current ?? '') + chunk),
-          completed: ({ message, balance: next }) => {
+          completed: ({ message, cost, balance: next }) => {
             setMessages((current) => [...current, message])
+            setSpent((all) => ({ ...all, [target]: (all[target] ?? 0) + cost }))
             setBalance(next)
           },
           failed: ({ message, balance: next }) => {
@@ -138,22 +151,53 @@ export function ChatView({ conversationId, title, balance, onOpenSide }: Props) 
   const heading = liveTitle ?? title ?? detail.data?.conversation.title
   const missing = detail.error instanceof ApiError && detail.error.status === 404
   const empty = !activeId && messages.length === 0 && streaming === null
+  const last = [...messages].reverse().find((m) => m.role === 'assistant' && m.status === 'completed')
+  const tokens = last ? last.usage.input_tokens + last.usage.output_tokens : 0
+  const window_ = contextWindow(last?.model ?? null)
+  const pct = Math.min(100, (tokens / window_) * 100)
+  const cost = activeId ? spent[activeId] : undefined
 
   return (
     <>
       <header className="top">
-        <button className="icon side-btn" onClick={onOpenSide} aria-label="Open sidebar">
-          <Menu />
+        <button className="icon side-btn" onClick={onOpenSide} aria-label="Show sidebar">
+          <SidebarIcon />
         </button>
         <div className="crumb">
           <span className="p">Chats</span>
           <Chevron />
           <span className="t">{activeId ? heading ?? '…' : 'New chat'}</span>
         </div>
-        <div className="right">{balance.toLocaleString()} cr</div>
+        <div className="right">
+          {tokens > 0 && (
+            <span className="ring" title={`${Math.round(tokens / 1000)}k of ${Math.round(window_ / 1000)}k tokens in context`}>
+              <svg viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="14" fill="none" stroke="var(--track)" strokeWidth="4" />
+                <circle cx="18" cy="18" r="14" fill="none" stroke="var(--text-2)" strokeWidth="4" strokeDasharray={`${(pct / 100) * 88} 88`} />
+              </svg>
+              <span>{pct < 1 && pct > 0 ? '<1' : Math.round(pct)}%</span>
+            </span>
+          )}
+          {cost !== undefined && (
+            <span className="cost" title="Credits used by this chat since the page opened">
+              {cost.toLocaleString()} cr
+            </span>
+          )}
+          <button className="icon" onClick={onNew} data-tip="New chat (⇧⌘O)" aria-label="New chat">
+            <NewChat />
+          </button>
+        </div>
       </header>
       <div className="convo">
-        <div className="msgs" ref={scroller} onClick={onCopy}>
+        <div
+          className="msgs"
+          ref={scroller}
+          onClick={onCopy}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+          }}
+        >
           <div className="pane">
             {missing && <div className="note-err">This conversation does not exist or was deleted.</div>}
             {empty && (
@@ -194,33 +238,38 @@ export function ChatView({ conversationId, title, balance, onOpenSide }: Props) 
           </div>
         </div>
         <div className="composer-wrap">
+          {!atBottom && (
+            <button type="button" className="jump" onClick={toBottom}>
+              <ArrowDown />
+              Latest
+            </button>
+          )}
           <form className="composer" onSubmit={(e) => void send(undefined, e)}>
             <textarea
               ref={input}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Message Tess…"
+              placeholder="Ask anything"
               rows={2}
               aria-label="Message"
             />
             <div className="bar">
-              <span className="chip">gemini · groq</span>
               <span className={`status ${error ? 'err' : ''}`}>
                 {error ?? (streaming !== null ? 'Streaming…' : '')}
               </span>
               {streaming !== null ? (
-                <button type="button" className="send" onClick={() => abort.current?.abort()} title="Stop">
+                <button type="button" className="sendi" onClick={() => abort.current?.abort()} aria-label="Stop" title="Stop">
                   <Stop />
                 </button>
               ) : (
-                <button type="submit" className="send" disabled={!draft.trim()} title="Send">
+                <button type="submit" className="sendi" disabled={!draft.trim()} aria-label="Send" title="Send">
                   <Send />
                 </button>
               )}
             </div>
           </form>
-          <div className="hint">Enter to send · Shift+Enter for a new line</div>
+          <p className="hint">↵ send · ⇧↵ newline · ⇧⌘O new chat</p>
         </div>
       </div>
     </>
@@ -233,7 +282,7 @@ function Turn({ message }: { message: Message }) {
       <div className="turn user">
         <div className="msg user">{message.content}</div>
         <div className="acts">
-          <span className="ago">{ago(message.created_at)}</span>
+          <span className="ago">{when(message.created_at)}</span>
         </div>
       </div>
     )
@@ -248,7 +297,7 @@ function Turn({ message }: { message: Message }) {
       <div className="acts">
         <button
           className="icon"
-          title="Copy"
+          data-tip="Copy"
           onClick={() => void navigator.clipboard.writeText(message.content)}
         >
           <Copy />

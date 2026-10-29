@@ -59,21 +59,42 @@ class GetConversation:
 
 
 @dataclass(frozen=True)
-class RenameConversation:
+class UpdateConversation:
     uow: UnitOfWorkFactory
     clock: Clock
 
-    async def execute(self, user_id: UUID, conversation_id: UUID, title: str) -> Conversation:
+    async def execute(
+        self,
+        user_id: UUID,
+        conversation_id: UUID,
+        title: str | None = None,
+        pinned: bool | None = None,
+        archived: bool | None = None,
+    ) -> Conversation:
         async with self.uow() as uow:
             conversation = await load_owned(uow, user_id, conversation_id)
-            previous = conversation.title
-            conversation.rename(title, self.clock.now())
-            await uow.conversations.update(conversation)
-            uow.record(
-                events.conversation_event(
-                    "renamed", user_id, conversation.id, previous=previous, title=conversation.title
+            now = self.clock.now()
+            if title is not None and title != conversation.title:
+                previous = conversation.title
+                conversation.rename(title, now)
+                uow.record(
+                    events.conversation_event(
+                        "renamed",
+                        user_id,
+                        conversation.id,
+                        previous=previous,
+                        title=conversation.title,
+                    )
                 )
-            )
+            if archived is not None and archived != (conversation.archived_at is not None):
+                conversation.set_archived(archived, now)
+                action = "archived" if archived else "unarchived"
+                uow.record(events.conversation_event(action, user_id, conversation.id))
+            if pinned is not None and pinned != (conversation.pinned_at is not None):
+                conversation.set_pinned(pinned, now)
+                action = "pinned" if pinned else "unpinned"
+                uow.record(events.conversation_event(action, user_id, conversation.id))
+            await uow.conversations.update(conversation)
             await uow.commit()
             return conversation
 

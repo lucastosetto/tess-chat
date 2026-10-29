@@ -12,8 +12,8 @@ from tess_chat.adapters.http.schemas import (
     ConversationOut,
     CreateConversationIn,
     MessageOut,
-    RenameConversationIn,
     SendMessageIn,
+    UpdateConversationIn,
 )
 from tess_chat.adapters.http.sse import format_event, with_heartbeat
 from tess_chat.application.use_cases.send_message import (
@@ -52,10 +52,12 @@ async def get_conversation(
 
 
 @router.patch("/conversations/{conversation_id}")
-async def rename_conversation(
-    conversation_id: UUID, body: RenameConversationIn, user: CurrentUser, container: ContainerDep
+async def update_conversation(
+    conversation_id: UUID, body: UpdateConversationIn, user: CurrentUser, container: ContainerDep
 ) -> ConversationOut:
-    conversation = await container.rename_conversation.execute(user.id, conversation_id, body.title)
+    conversation = await container.update_conversation.execute(
+        user.id, conversation_id, body.title, body.pinned, body.archived
+    )
     return ConversationOut.of(conversation)
 
 

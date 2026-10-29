@@ -39,6 +39,8 @@ class AuthConfigOut(BaseModel):
 class ConversationOut(BaseModel):
     id: UUID
     title: str
+    pinned: bool
+    archived: bool
     created_at: datetime
     updated_at: datetime
 
@@ -47,6 +49,8 @@ class ConversationOut(BaseModel):
         return cls(
             id=conversation.id,
             title=conversation.title,
+            pinned=conversation.pinned_at is not None,
+            archived=conversation.archived_at is not None,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
         )
@@ -97,8 +101,10 @@ class CreateConversationIn(BaseModel):
     title: str | None = Field(default=None, max_length=200)
 
 
-class RenameConversationIn(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+class UpdateConversationIn(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    pinned: bool | None = None
+    archived: bool | None = None
 
 
 class SendMessageIn(BaseModel):

@@ -1,6 +1,13 @@
 export type User = { id: string; email: string; name: string; role: string }
 export type Me = { user: User; balance: number }
-export type Conversation = { id: string; title: string; created_at: string; updated_at: string }
+export type Conversation = {
+  id: string
+  title: string
+  pinned: boolean
+  archived: boolean
+  created_at: string
+  updated_at: string
+}
 export type Usage = { input_tokens: number; output_tokens: number; cached_input_tokens: number }
 export type Message = {
   id: string
@@ -49,10 +56,10 @@ export const api = {
   createConversation: () =>
     request<Conversation>('/api/conversations', { method: 'POST', body: '{}' }),
   conversation: (id: string) => request<ConversationDetail>(`/api/conversations/${id}`),
-  rename: (id: string, title: string) =>
+  update: (id: string, changes: Partial<Pick<Conversation, 'title' | 'pinned' | 'archived'>>) =>
     request<Conversation>(`/api/conversations/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ title }),
+      body: JSON.stringify(changes),
     }),
   remove: (id: string) => request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
 }

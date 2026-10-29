@@ -17,6 +17,10 @@ export default function App() {
     <Routes>
       <Route path="/login" element={signedIn ? <Navigate to="/" replace /> : <Login />} />
       <Route
+        path="/settings"
+        element={signedIn ? <ChatLayout me={me.data!} view="settings" /> : <Navigate to="/login" replace />}
+      />
+      <Route
         path="/c?/:conversationId?"
         element={signedIn ? <ChatLayout me={me.data!} /> : <Navigate to="/login" replace />}
       />

@@ -33,6 +33,8 @@ class ConversationRow(Base):
     title: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
+    pinned_at: Mapped[datetime | None]
+    archived_at: Mapped[datetime | None]
     deleted_at: Mapped[datetime | None]
 
 

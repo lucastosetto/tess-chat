@@ -22,8 +22,8 @@ from tess_chat.application.use_cases.conversations import (
     DeleteConversation,
     GetConversation,
     ListConversations,
-    RenameConversation,
     StartConversation,
+    UpdateConversation,
 )
 from tess_chat.application.use_cases.send_message import SendMessage
 from tess_chat.application.use_cases.usage import GetBalance, ListActivity
@@ -80,7 +80,7 @@ def build_container(settings: Settings, uow: UnitOfWorkFactory, llm: LLMProvider
         start_conversation=StartConversation(uow, clock),
         list_conversations=ListConversations(uow),
         get_conversation=GetConversation(uow),
-        rename_conversation=RenameConversation(uow, clock),
+        update_conversation=UpdateConversation(uow, clock),
         delete_conversation=DeleteConversation(uow, clock),
         send_message=SendMessage(
             uow, clock, llm, settings.max_output_tokens, settings.global_credit_cap

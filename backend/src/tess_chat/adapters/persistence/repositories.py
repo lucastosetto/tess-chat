@@ -69,6 +69,8 @@ class SqlConversationRepository:
                 title=conversation.title,
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
+                pinned_at=conversation.pinned_at,
+                archived_at=conversation.archived_at,
                 deleted_at=conversation.deleted_at,
             )
         )
@@ -80,6 +82,8 @@ class SqlConversationRepository:
             return
         row.title = conversation.title
         row.updated_at = conversation.updated_at
+        row.pinned_at = conversation.pinned_at
+        row.archived_at = conversation.archived_at
         row.deleted_at = conversation.deleted_at
 
 
@@ -236,6 +240,8 @@ def _conversation(row: ConversationRow) -> Conversation:
         title=row.title,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        pinned_at=row.pinned_at,
+        archived_at=row.archived_at,
         deleted_at=row.deleted_at,
     )
 

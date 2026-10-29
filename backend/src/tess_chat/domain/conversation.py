@@ -15,6 +15,8 @@ class Conversation:
     title: str
     created_at: datetime
     updated_at: datetime
+    pinned_at: datetime | None = None
+    archived_at: datetime | None = None
     deleted_at: datetime | None = None
 
     @classmethod
@@ -34,6 +36,14 @@ class Conversation:
     def rename(self, title: str, now: datetime) -> None:
         self.title = _clean_title(title)
         self.updated_at = now
+
+    def set_pinned(self, pinned: bool, now: datetime) -> None:
+        self.pinned_at = now if pinned else None
+
+    def set_archived(self, archived: bool, now: datetime) -> None:
+        self.archived_at = now if archived else None
+        if archived:
+            self.pinned_at = None
 
     def touch(self, now: datetime) -> None:
         self.updated_at = now

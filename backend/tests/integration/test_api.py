@@ -60,5 +60,11 @@ async def test_chat_flow(client: httpx.AsyncClient) -> None:
     actions = {e["action"] for e in (await client.get("/api/activity")).json()}
     assert {"user.registered", "message.completed", "credits.settled"} <= actions
 
+    url = f"/api/conversations/{conversation['id']}"
+    pinned = (await client.patch(url, json={"pinned": True, "title": "Trip"})).json()
+    assert pinned["pinned"] and pinned["title"] == "Trip"
+    archived = (await client.patch(url, json={"archived": True})).json()
+    assert archived["archived"] and not archived["pinned"]
+
     assert (await client.delete(f"/api/conversations/{conversation['id']}")).status_code == 204
     assert (await client.get("/api/conversations")).json() == []

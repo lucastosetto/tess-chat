@@ -6,8 +6,8 @@ from tess_chat.application.use_cases.conversations import (
     DeleteConversation,
     GetConversation,
     ListConversations,
-    RenameConversation,
     StartConversation,
+    UpdateConversation,
 )
 from tess_chat.application.use_cases.send_message import SendMessage
 from tess_chat.application.use_cases.usage import GetBalance, ListActivity
@@ -23,7 +23,7 @@ class Container:
     start_conversation: StartConversation
     list_conversations: ListConversations
     get_conversation: GetConversation
-    rename_conversation: RenameConversation
+    update_conversation: UpdateConversation
     delete_conversation: DeleteConversation
     send_message: SendMessage
     get_balance: GetBalance
