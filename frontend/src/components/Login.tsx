@@ -6,7 +6,7 @@ import { Google, LogoMark } from '../icons'
 
 const ERRORS: Record<string, string> = {
   google: 'Google sign-in failed. Try again.',
-  link: 'That sign-in link is invalid or expired. Ask for a new one.',
+  link: 'That magic link is invalid or expired. Ask for a new one.',
 }
 
 export function Login() {
@@ -39,7 +39,7 @@ export function Login() {
         {config.data?.email_login &&
           (send.isSuccess ? (
             <p className="meta sent">
-              Check <b>{email}</b> for a sign-in link. It expires in 15 minutes.{' '}
+              Check <b>{email}</b> for a magic link. It expires in 15 minutes.{' '}
               <button className="link" onClick={() => send.reset()}>
                 Use another email
               </button>
@@ -58,7 +58,7 @@ export function Login() {
                 />
               </label>
               <button className="b primary" type="submit" disabled={send.isPending}>
-                {send.isPending ? 'Sending…' : 'Email me a sign-in link'}
+                {send.isPending ? 'Sending…' : 'Send me a magic link'}
               </button>
               {send.error && <p className="err">{send.error.message}</p>}
             </form>

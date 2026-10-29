@@ -71,7 +71,7 @@ class SendLoginLink:
             await uow.commit()
         await self.email.send(
             link.email,
-            "Your Tess sign-in link",
+            "Your Tess magic link",
             f"Sign in to Tess:\n\n{url_for(token)}\n\n"
             "This link expires in 15 minutes and works once. "
             "If you didn't ask for it, ignore this email.",
