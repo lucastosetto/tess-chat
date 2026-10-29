@@ -172,6 +172,9 @@ importers:
       dompurify:
         specifier: ^3.4.17
         version: 3.4.17
+      highlight.js:
+        specifier: ^11.12.0
+        version: 11.12.0
       marked:
         specifier: ^15.0.12
         version: 15.0.12
@@ -1013,6 +1016,10 @@ packages:
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
+
+  highlight.js@11.12.0:
+    resolution: {integrity: sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg==}
+    engines: {node: '>=12.0.0'}
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
@@ -2054,6 +2061,8 @@ snapshots:
   globals@16.5.0: {}
 
   has-flag@4.0.0: {}
+
+  highlight.js@11.12.0: {}
 
   ignore@5.3.2: {}
 

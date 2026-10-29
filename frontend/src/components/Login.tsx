@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { LogoMark } from '../icons'
 
 export function Login() {
   const queryClient = useQueryClient()
@@ -20,8 +21,11 @@ export function Login() {
   return (
     <div className="login">
       <div className="login-card">
-        <h1>Tess Chat</h1>
-        <p className="muted">Multi-conversation AI chat.</p>
+        <span className="logo">
+          <LogoMark />
+        </span>
+        <h1>Sign in to Tess</h1>
+        <p className="meta">Chat with AI across many conversations.</p>
         {config.data?.dev_login ? (
           <form onSubmit={submit}>
             <label>
@@ -29,6 +33,7 @@ export function Login() {
               <input
                 type="email"
                 required
+                autoFocus
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
@@ -38,14 +43,15 @@ export function Login() {
               Name
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" />
             </label>
-            <button type="submit" disabled={login.isPending}>
-              {login.isPending ? 'Signing in…' : 'Continue (dev login)'}
+            <button className="b primary" type="submit" disabled={login.isPending}>
+              {login.isPending ? 'Signing in…' : 'Continue'}
             </button>
-            {login.error && <p className="error">{login.error.message}</p>}
+            {login.error && <p className="err">{login.error.message}</p>}
           </form>
         ) : (
-          <p className="muted">{config.isPending ? 'Loading…' : 'No sign-in method is enabled.'}</p>
+          <p className="meta">{config.isPending ? 'Loading…' : 'No sign-in method is enabled.'}</p>
         )}
+        {config.data?.dev_login && <p className="tag">dev login · no password</p>}
       </div>
     </div>
   )
