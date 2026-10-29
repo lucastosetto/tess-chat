@@ -1,0 +1,15 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: bash -c 'cd backend && uv run ruff check --fix . && uv run ruff format .'
+        language: system
+        pass_filenames: false
+        files: ^backend/
+      - id: mypy
+        name: mypy
+        entry: bash -c 'cd backend && uv run mypy && uv run lint-imports'
+        language: system
+        pass_filenames: false
+        files: ^backend/

@@ -1,0 +1,10 @@
+**/.venv
+**/node_modules
+**/dist
+**/__pycache__
+**/.env
+**/.env.*
+.git
+infra
+docs
+.claude

@@ -1,0 +1,108 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: tess-chat-19db69
+  REGION: us-central1
+  SERVICE: tess-chat
+  IMAGE: us-central1-docker.pkg.dev/tess-chat-19db69/tess-chat/app
+  WIF_PROVIDER: projects/320840833152/locations/global/workloadIdentityPools/github/providers/github-actions
+  DEPLOYER_SA: tess-chat-deployer@tess-chat-19db69.iam.gserviceaccount.com
+  RUNTIME_SA: tess-chat-runtime@tess-chat-19db69.iam.gserviceaccount.com
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tess
+          POSTGRES_PASSWORD: tess
+          POSTGRES_DB: tess_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tess" --health-interval 2s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://tess:tess@localhost:5432/tess_test
+      TEST_DATABASE_URL: postgresql://tess:tess@localhost:5432/tess_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run lint-imports
+      - run: uv run alembic upgrade head
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+      - name: Build and push
+        run: |
+          docker build -t "$IMAGE:$GITHUB_SHA" .
+          docker push "$IMAGE:$GITHUB_SHA"
+      - name: Run migrations
+        run: |
+          gcloud run jobs deploy "$SERVICE-migrate" \
+            --image "$IMAGE:$GITHUB_SHA" \
+            --region "$REGION" \
+            --service-account "$RUNTIME_SA" \
+            --set-secrets DATABASE_URL=database-url:latest \
+            --command alembic --args upgrade,head \
+            --max-retries 0 --task-timeout 300s
+          gcloud run jobs execute "$SERVICE-migrate" --region "$REGION" --wait
+      - name: Deploy service
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE:$GITHUB_SHA" \
+            --region "$REGION" \
+            --quiet
+      - name: Smoke test
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --format 'value(status.url)')
+          curl -fsS "$URL/healthz"
