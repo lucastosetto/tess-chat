@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type Me } from '../api'
-import { Chats, LogoMark, Settings, SidebarIcon } from '../icons'
+import { Chats, Logo, Settings, SidebarIcon } from '../icons'
 import { store } from '../store'
 import { ChatView } from './ChatView'
 import { Sessions } from './Sessions'
@@ -47,10 +47,7 @@ export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'set
             <SidebarIcon />
           </button>
           <span className="lbl wordmark">
-            <span className="logo">
-              <LogoMark />
-            </span>
-            Tess
+            <Logo />
           </span>
         </div>
         <nav className="nav" aria-label="Views">
