@@ -51,6 +51,14 @@ class Settings(BaseSettings):
 
     default_credit_grant: int = 2_000_000
     global_credit_cap: int = 50_000_000
+    tavily_api_key: str = ""
+    gcp_project_id: str = ""
+    trace_exporter: Literal["none", "console", "gcp"] = "none"
+    storage_backend: Literal["local", "gcs"] = "local"
+    gcs_bucket: str = ""
+    local_storage_dir: str = ".data/attachments"
+    compaction_threshold_tokens: int = 24_000
+    compaction_keep_recent: int = 6
 
     static_dir: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])

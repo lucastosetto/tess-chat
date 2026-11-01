@@ -16,3 +16,4 @@ tfplan
 .mypy_cache/
 .ruff_cache/
 *.tsbuildinfo
+.data/

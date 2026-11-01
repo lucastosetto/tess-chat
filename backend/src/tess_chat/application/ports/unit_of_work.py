@@ -2,6 +2,7 @@ from types import TracebackType
 from typing import Protocol, Self
 
 from tess_chat.application.ports.repositories import (
+    AttachmentRepository,
     AuditRepository,
     ConversationRepository,
     LedgerRepository,
@@ -18,6 +19,7 @@ class UnitOfWork(Protocol):
     login_links: LoginLinkRepository
     conversations: ConversationRepository
     messages: MessageRepository
+    attachments: AttachmentRepository
     ledger: LedgerRepository
     pricing: PricingRepository
     audit: AuditRepository

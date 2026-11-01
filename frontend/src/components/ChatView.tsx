@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Picker } from './Picker'
-import { api, ApiError, streamMessage, type Conversation, type Me, type Message } from '../api'
-import { ArrowDown, Chevron, Copy, LogoMark, NewChat, Send, SidebarIcon, Stop } from '../icons'
+import { api, ApiError, streamMessage, type Conversation, type Me, type Attachment, type Message, type ToolCall } from '../api'
+import { ArrowDown, Chevron, ChevronDown, Clip, Copy, FileIcon, LogoMark, NewChat, Send, SidebarIcon, Stop } from '../icons'
 import { renderMarkdown } from '../markdown'
 import { when } from '../time'
 
@@ -24,6 +24,11 @@ function contextWindow(model: string | null): number {
   return model && /gemini/i.test(model) ? 1_048_576 : 131_072
 }
 
+type Pending = { key: string; name: string; preview: string | null; attachment?: Attachment }
+
+const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,application/pdf'
+const MAX_FILES = 5
+
 const EFFORTS = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
@@ -37,12 +42,19 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState<string | null>(null)
+  const [liveTools, setLiveTools] = useState<ToolCall[]>([])
+  const [pending, setPending] = useState<Pending[]>([])
+  const [zoom, setZoom] = useState<string | null>(null)
+  const picker = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [liveTitle, setLiveTitle] = useState<string | undefined>()
   const [spent, setSpent] = useState<Record<string, number>>({})
   const [atBottom, setAtBottom] = useState(true)
   const [pick, setPick] = useState({ model: '', effort: '' })
   const models = useQuery({ queryKey: ['models'], queryFn: api.models, staleTime: Infinity })
+  const me = useQuery({ queryKey: ['me'], queryFn: api.me })
+  const [capped, setCapped] = useState(false)
+  const broke = capped || (me.data !== undefined && me.data.balance <= 0)
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   const abort = useRef<AbortController | null>(null)
@@ -98,13 +110,37 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   const setBalance = (next: number) =>
     queryClient.setQueryData<Me>(['me'], (me) => (me ? { ...me, balance: next } : me))
 
+  const addFiles = (files: File[]) => {
+    const room = MAX_FILES - pending.length
+    if (files.length > room) setError(`Up to ${MAX_FILES} files per message.`)
+    for (const file of files.slice(0, Math.max(room, 0))) {
+      const key = crypto.randomUUID()
+      const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : null
+      setPending((all) => [...all, { key, name: file.name, preview }])
+      api
+        .upload(file)
+        .then((attachment) =>
+          setPending((all) => all.map((p) => (p.key === key ? { ...p, attachment } : p))),
+        )
+        .catch((err) => {
+          setPending((all) => all.filter((p) => p.key !== key))
+          setError(describe(err))
+        })
+    }
+  }
+
+  const uploading = pending.some((p) => !p.attachment)
+
   const send = async (text?: string, event?: FormEvent) => {
     event?.preventDefault()
     const content = (text ?? draft).trim()
-    if (!content || streaming !== null) return
+    const attached = text === undefined ? pending : []
+    if ((!content && !attached.length) || streaming !== null || uploading || broke) return
     setDraft('')
+    setPending([])
     setError(null)
     setStreaming('')
+    setLiveTools([])
     setAtBottom(true)
     const controller = new AbortController()
     abort.current = controller
@@ -120,6 +156,7 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
       await streamMessage(
         target,
         content,
+        attached.map((p) => p.attachment!.id),
         {
           accepted: ({ message, title: newTitle }) => {
             setMessages((current) => [...current, message])
@@ -128,7 +165,16 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
             queryClient.invalidateQueries({ queryKey: ['conversations'] })
           },
           delta: ({ text: chunk }) => setStreaming((current) => (current ?? '') + chunk),
+          tool_started: (call) =>
+            setLiveTools((current) => [...current, { ...call, output: '', ok: true }]),
+          tool_finished: (call) =>
+            setLiveTools((current) => current.map((t) => (t.id === call.id ? call : t))),
+          compacted: ({ cost, balance: next }) => {
+            setBalance(next)
+            setSpent((all) => ({ ...all, [target]: (all[target] ?? 0) + cost }))
+          },
           completed: ({ message, cost, balance: next }) => {
+            setLiveTools([])
             setMessages((current) => [...current, message])
             setSpent((all) => ({ ...all, [target]: (all[target] ?? 0) + cost }))
             setBalance(next)
@@ -140,10 +186,14 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
             queryClient.invalidateQueries({ queryKey: ['conversations'] })
           },
           failed: ({ message, balance: next }) => {
+            setLiveTools([])
             setMessages((current) => [...current, message])
             setBalance(next)
           },
-          error: ({ code }) => setError(code),
+          error: ({ code }) => {
+            if (code === 'insufficient_credits') setCapped(true)
+            setError(code)
+          },
         },
         controller.signal,
       )
@@ -152,8 +202,10 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
       if (controller.signal.aborted) {
         setError('Stopped. The partial reply will appear after a refresh.')
       } else {
+        if (err instanceof ApiError && err.status === 402) setCapped(true)
         setError(describe(err))
         setDraft(content)
+        setPending(attached)
       }
     } finally {
       abort.current = null
@@ -174,6 +226,8 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
     if (button && code) void navigator.clipboard.writeText(code)
   }
 
+  const until = detail.data?.conversation.summary_until
+  const lastSummarized = until ? messages.filter((m) => m.created_at <= until).length - 1 : -1
   const heading = liveTitle ?? title ?? detail.data?.conversation.title
   const missing = detail.error instanceof ApiError && detail.error.status === 404
   const empty = !activeId && messages.length === 0 && streaming === null
@@ -243,17 +297,25 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
                 </div>
               </div>
             )}
-            {messages.map((m) => (
-              <Turn key={m.id} message={m} />
+            {messages.map((m, i) => (
+              <Fragment key={m.id}>
+                <Turn message={m} onZoom={setZoom} />
+                {i === lastSummarized && (
+                  <div className="summarized" title="Older messages are sent to the model as a summary to save context">
+                    Earlier messages summarized
+                  </div>
+                )}
+              </Fragment>
             ))}
             {streaming !== null && (
               <div className="turn assistant">
+                {liveTools.length > 0 && <Steps calls={liveTools} running />}
                 {streaming ? (
                   <div
                     className="msg assistant"
                     dangerouslySetInnerHTML={{ __html: renderMarkdown(streaming) + '<span class="cursor"></span>' }}
                   />
-                ) : (
+                ) : liveTools.length > 0 && liveTools.every((t) => t.output) ? null : (
                   <div className="typing">
                     <i />
                     Thinking…
@@ -270,8 +332,51 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
               Latest
             </button>
           )}
-          <form className="composer" onSubmit={(e) => void send(undefined, e)}>
+          {broke && (
+            <div className="note-err capped">
+              You are out of credits. Replies are paused until your balance is topped up.
+            </div>
+          )}
+          <form
+            className="composer"
+            onSubmit={(e) => void send(undefined, e)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              addFiles([...e.dataTransfer.files])
+            }}
+          >
+            {pending.length > 0 && (
+              <div className="shots">
+                {pending.map((p) => (
+                  <div key={p.key} className={`shot ${p.attachment ? '' : 'busy'}`}>
+                    {p.preview ? (
+                      <img src={p.preview} alt={p.name} onClick={() => setZoom(p.preview)} />
+                    ) : (
+                      <span className="chip box">
+                        <FileIcon />
+                        <span>{p.name}</span>
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${p.name}`}
+                      onClick={() => setPending((all) => all.filter((x) => x.key !== p.key))}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files]
+                if (files.length) {
+                  e.preventDefault()
+                  addFiles(files)
+                }
+              }}
               ref={input}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -281,6 +386,27 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
               aria-label="Message"
             />
             <div className="bar">
+              <input
+                ref={picker}
+                type="file"
+                accept={ACCEPT}
+                multiple
+                hidden
+                onChange={(e) => {
+                  addFiles([...(e.target.files ?? [])])
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                className="icon"
+                data-tip="Attach images or PDFs"
+                aria-label="Attach files"
+                disabled={streaming !== null || pending.length >= MAX_FILES}
+                onClick={() => picker.current?.click()}
+              >
+                <Clip />
+              </button>
               <Picker
                 label="Model"
                 value={choice.model}
@@ -304,12 +430,17 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
                   <Stop />
                 </button>
               ) : (
-                <button type="submit" className="sendi" disabled={!draft.trim()} aria-label="Send" title="Send">
+                <button type="submit" className="sendi" disabled={(!draft.trim() && !pending.length) || uploading || broke} aria-label="Send" title="Send">
                   <Send />
                 </button>
               )}
             </div>
           </form>
+          {zoom && (
+            <div className="lightbox" onClick={() => setZoom(null)}>
+              <img src={zoom} alt="" />
+            </div>
+          )}
           <p className="hint">↵ send · ⇧↵ newline · ⇧⌘O new chat</p>
         </div>
       </div>
@@ -317,11 +448,28 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   )
 }
 
-function Turn({ message }: { message: Message }) {
+function Turn({ message, onZoom }: { message: Message; onZoom: (url: string) => void }) {
   if (message.role === 'user') {
     return (
       <div className="turn user">
-        <div className="msg user">{message.content}</div>
+        <div className="msg user">
+          {message.attachments.length > 0 && (
+            <div className="atts">
+              {message.attachments.map((a) => {
+                const url = `/api/attachments/${a.id}`
+                return a.mime.startsWith('image/') ? (
+                  <img key={a.id} className="att" src={url} alt={a.filename} onClick={() => onZoom(url)} />
+                ) : (
+                  <a key={a.id} className="chip box" href={url} target="_blank" rel="noreferrer">
+                    <FileIcon />
+                    <span>{a.filename}</span>
+                  </a>
+                )
+              })}
+            </div>
+          )}
+          {message.content}
+        </div>
         <div className="acts">
           <span className="ago">{when(message.created_at)}</span>
         </div>
@@ -331,6 +479,7 @@ function Turn({ message }: { message: Message }) {
   const html = message.content ? withCopyButtons(renderMarkdown(message.content)) : ''
   return (
     <div className="turn assistant">
+      {message.tool_calls.length > 0 && <Steps calls={message.tool_calls} />}
       {html && <div className="msg assistant" dangerouslySetInnerHTML={{ __html: html }} />}
       {message.status === 'failed' && (
         <div className="note-err">The reply failed ({message.error}). Credits were refunded.</div>
@@ -345,11 +494,50 @@ function Turn({ message }: { message: Message }) {
         </button>
         {message.model && (
           <span className="ago">
-            {message.provider} · {message.model} · {message.usage.input_tokens}→{message.usage.output_tokens} tok
+            {message.provider} · {message.model} · {message.usage.input_tokens.toLocaleString()}→
+            {message.usage.output_tokens.toLocaleString()} tok
+            {message.cost > 0 && ` · ${message.cost.toLocaleString()} cr`}
           </span>
         )}
       </div>
     </div>
+  )
+}
+
+const VERB: Record<string, string> = { web_search: 'Search', fetch_url: 'Fetch' }
+
+function target(raw: string): string {
+  try {
+    const args = JSON.parse(raw) as Record<string, unknown>
+    return String(args.query ?? args.url ?? Object.values(args)[0] ?? '').replace(/\s+/g, ' ')
+  } catch {
+    return raw
+  }
+}
+
+function Steps({ calls, running }: { calls: ToolCall[]; running?: boolean }) {
+  const n = calls.length
+  return (
+    <details className="steps" open={running}>
+      <summary>
+        <ChevronDown />
+        <span>
+          Used <b>{n} tool{n === 1 ? '' : 's'}</b>
+        </span>
+      </summary>
+      <div className="list">
+        {calls.map((call) => (
+          <details key={call.id} className={`step ${call.ok ? '' : 'err'}`}>
+            <summary>
+              <span className="v">{VERB[call.name] ?? call.name}</span>
+              <span className="w">{target(call.arguments)}</span>
+              <span className="r">{!call.output ? '…' : call.ok ? 'done' : 'failed'}</span>
+            </summary>
+            <pre>{call.output || call.arguments}</pre>
+          </details>
+        ))}
+      </div>
+    </details>
   )
 }
 

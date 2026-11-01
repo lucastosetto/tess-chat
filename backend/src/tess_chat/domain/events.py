@@ -74,3 +74,13 @@ def credits_event(action: str, user_id: UUID, entry_id: UUID, **payload: Any) ->
         subject_id=entry_id,
         payload=payload,
     )
+
+
+def attachment_uploaded(user_id: UUID, attachment_id: UUID, mime: str, size: int) -> DomainEvent:
+    return DomainEvent(
+        name="attachment.uploaded",
+        actor_id=user_id,
+        subject_type="attachment",
+        subject_id=attachment_id,
+        payload={"mime": mime, "size": size},
+    )

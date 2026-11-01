@@ -2,10 +2,11 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tess_chat.adapters.persistence.models import (
+    AttachmentRow,
     AuditRow,
     ConversationRow,
     LedgerRow,
@@ -14,11 +15,13 @@ from tess_chat.adapters.persistence.models import (
     ModelPricingRow,
     UserRow,
 )
+from tess_chat.application.ports.repositories import UsageRow
+from tess_chat.domain.attachment import Attachment
 from tess_chat.domain.audit import AuditEvent
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.credits import EntryKind, LedgerEntry, ModelPrice, TokenUsage
 from tess_chat.domain.login_link import LoginLink
-from tess_chat.domain.message import Message, MessageStatus, Role
+from tess_chat.domain.message import Message, MessageStatus, Role, ToolInvocation
 from tess_chat.domain.user import Role as UserRole
 from tess_chat.domain.user import User
 
@@ -124,6 +127,8 @@ class SqlConversationRepository:
                 pinned_at=conversation.pinned_at,
                 archived_at=conversation.archived_at,
                 deleted_at=conversation.deleted_at,
+                summary=conversation.summary,
+                summary_until=conversation.summary_until,
             )
         )
         await self._session.flush()
@@ -139,6 +144,8 @@ class SqlConversationRepository:
         row.pinned_at = conversation.pinned_at
         row.archived_at = conversation.archived_at
         row.deleted_at = conversation.deleted_at
+        row.summary = conversation.summary
+        row.summary_until = conversation.summary_until
 
 
 class SqlMessageRepository:
@@ -151,7 +158,45 @@ class SqlMessageRepository:
             .where(MessageRow.conversation_id == conversation_id)
             .order_by(MessageRow.created_at, MessageRow.id)
         )
-        return [_message(row) for row in rows]
+        messages = [_message(row) for row in rows]
+        by_id = {m.id: m for m in messages}
+        if by_id:
+            attachments = await self._session.scalars(
+                select(AttachmentRow)
+                .where(AttachmentRow.message_id.in_(by_id))
+                .order_by(AttachmentRow.created_at)
+            )
+            for row in attachments:
+                if row.message_id is not None:
+                    by_id[row.message_id].attachments.append(_attachment(row))
+        return messages
+
+    async def usage_for_owner(self, owner_id: UUID, since: datetime) -> Sequence[UsageRow]:
+        day = func.date_trunc("day", MessageRow.created_at).label("day")
+        model = func.coalesce(MessageRow.model, "unknown").label("model")
+        rows = await self._session.execute(
+            select(
+                day,
+                model,
+                func.count().filter(MessageRow.status == "completed"),
+                func.count().filter(MessageRow.status == "failed"),
+                func.coalesce(func.sum(MessageRow.input_tokens), 0),
+                func.coalesce(func.sum(MessageRow.output_tokens), 0),
+                func.coalesce(func.sum(MessageRow.cost), 0),
+                func.coalesce(func.sum(func.jsonb_array_length(MessageRow.tool_calls)), 0),
+            )
+            .join(ConversationRow, ConversationRow.id == MessageRow.conversation_id)
+            .where(
+                ConversationRow.owner_id == owner_id,
+                MessageRow.role == "assistant",
+                MessageRow.created_at >= since,
+            )
+            .group_by(day, model)
+        )
+        return [
+            UsageRow(r[0].date(), r[1], r[2], r[3], int(r[4]), int(r[5]), int(r[6]), int(r[7]))
+            for r in rows
+        ]
 
     async def add(self, message: Message) -> None:
         self._session.add(
@@ -167,10 +212,52 @@ class SqlMessageRepository:
                 output_tokens=message.usage.output_tokens,
                 cached_input_tokens=message.usage.cached_input_tokens,
                 error=message.error,
+                cost=message.cost,
+                tool_calls=[_invocation_json(t) for t in message.tool_calls],
                 created_at=message.created_at,
             )
         )
         await self._session.flush()
+        if message.attachments:
+            await self._session.execute(
+                update(AttachmentRow)
+                .where(AttachmentRow.id.in_([a.id for a in message.attachments]))
+                .values(message_id=message.id)
+            )
+
+
+class SqlAttachmentRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, attachment: Attachment) -> None:
+        self._session.add(
+            AttachmentRow(
+                id=attachment.id,
+                owner_id=attachment.owner_id,
+                message_id=attachment.message_id,
+                filename=attachment.filename,
+                mime=attachment.mime,
+                size=attachment.size,
+                storage_key=attachment.storage_key,
+                text=attachment.text,
+                created_at=attachment.created_at,
+            )
+        )
+        await self._session.flush()
+
+    async def get(self, attachment_id: UUID) -> Attachment | None:
+        row = await self._session.get(AttachmentRow, attachment_id)
+        return _attachment(row) if row else None
+
+    async def get_many(self, attachment_ids: Sequence[UUID]) -> Sequence[Attachment]:
+        if not attachment_ids:
+            return []
+        rows = await self._session.scalars(
+            select(AttachmentRow).where(AttachmentRow.id.in_(attachment_ids))
+        )
+        found = {row.id: _attachment(row) for row in rows}
+        return [found[i] for i in attachment_ids if i in found]
 
 
 class SqlLedgerRepository:
@@ -252,6 +339,7 @@ class SqlAuditRepository:
                 subject_id=event.subject_id,
                 payload=event.payload,
                 request_id=event.request_id,
+                trace_id=event.trace_id,
             )
         )
 
@@ -272,6 +360,7 @@ class SqlAuditRepository:
                 subject_id=row.subject_id,
                 payload=row.payload,
                 request_id=row.request_id,
+                trace_id=row.trace_id,
             )
             for row in rows
         ]
@@ -299,6 +388,8 @@ def _conversation(row: ConversationRow) -> Conversation:
         pinned_at=row.pinned_at,
         archived_at=row.archived_at,
         deleted_at=row.deleted_at,
+        summary=row.summary,
+        summary_until=row.summary_until,
     )
 
 
@@ -314,6 +405,35 @@ def _message(row: MessageRow) -> Message:
         provider=row.provider,
         usage=TokenUsage(row.input_tokens, row.output_tokens, row.cached_input_tokens),
         error=row.error,
+        cost=row.cost,
+        tool_calls=[
+            ToolInvocation(
+                id=str(t.get("id", "")),
+                name=str(t.get("name", "")),
+                arguments=str(t.get("arguments", "")),
+                output=str(t.get("output", "")),
+                ok=bool(t.get("ok")),
+            )
+            for t in row.tool_calls or []
+        ],
+    )
+
+
+def _invocation_json(t: ToolInvocation) -> dict[str, object]:
+    return {"id": t.id, "name": t.name, "arguments": t.arguments, "output": t.output, "ok": t.ok}
+
+
+def _attachment(row: AttachmentRow) -> Attachment:
+    return Attachment(
+        id=row.id,
+        owner_id=row.owner_id,
+        message_id=row.message_id,
+        filename=row.filename,
+        mime=row.mime,
+        size=row.size,
+        storage_key=row.storage_key,
+        text=row.text,
+        created_at=row.created_at,
     )
 
 

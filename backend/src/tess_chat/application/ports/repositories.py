@@ -1,8 +1,10 @@
 from collections.abc import Sequence
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
+from tess_chat.domain.attachment import Attachment
 from tess_chat.domain.audit import AuditEvent
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.credits import LedgerEntry, ModelPrice
@@ -31,9 +33,28 @@ class ConversationRepository(Protocol):
     async def update(self, conversation: Conversation) -> None: ...
 
 
+@dataclass(frozen=True)
+class UsageRow:
+    day: date
+    model: str
+    replies: int
+    failed: int
+    input_tokens: int
+    output_tokens: int
+    credits: int
+    tool_calls: int
+
+
 class MessageRepository(Protocol):
     async def list_for_conversation(self, conversation_id: UUID) -> Sequence[Message]: ...
+    async def usage_for_owner(self, owner_id: UUID, since: datetime) -> Sequence[UsageRow]: ...
     async def add(self, message: Message) -> None: ...
+
+
+class AttachmentRepository(Protocol):
+    async def add(self, attachment: Attachment) -> None: ...
+    async def get(self, attachment_id: UUID) -> Attachment | None: ...
+    async def get_many(self, attachment_ids: Sequence[UUID]) -> Sequence[Attachment]: ...
 
 
 class LedgerRepository(Protocol):

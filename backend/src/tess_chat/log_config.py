@@ -1,13 +1,17 @@
 import logging
 import sys
+from collections.abc import Sequence
 
 import structlog
 
 
-def configure_logging(level: str, json: bool) -> None:
+def configure_logging(
+    level: str, json: bool, extra: Sequence[structlog.types.Processor] = ()
+) -> None:
     processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
+        *extra,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,

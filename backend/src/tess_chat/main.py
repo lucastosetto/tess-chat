@@ -17,9 +17,23 @@ from tess_chat.adapters.llm.fallback import FallbackLLMProvider
 from tess_chat.adapters.llm.openai_compatible import OpenAICompatibleProvider
 from tess_chat.adapters.persistence.database import create_engine, session_factory
 from tess_chat.adapters.persistence.unit_of_work import SqlUnitOfWorkFactory
+from tess_chat.adapters.storage.files import GcsFileStorage, LocalFileStorage
+from tess_chat.adapters.storage.pdf import PdfTextExtractor
+from tess_chat.adapters.tools.web import FetchUrlTool, WebSearchTool
+from tess_chat.adapters.tracing import (
+    OtelTracer,
+    add_trace_context,
+    instrument,
+    setup_tracing,
+)
 from tess_chat.application.ports.email import EmailSender
 from tess_chat.application.ports.llm import LLMProvider, ModelOption
+from tess_chat.application.ports.storage import FileStorage
+from tess_chat.application.ports.tools import Tool
+from tess_chat.application.ports.tracing import NoopTracer, Tracer
 from tess_chat.application.ports.unit_of_work import UnitOfWorkFactory
+from tess_chat.application.tools import ToolRegistry
+from tess_chat.application.use_cases.attachments import ReadAttachment, UploadAttachment
 from tess_chat.application.use_cases.auth import (
     GetCurrentUser,
     SendLoginLink,
@@ -34,8 +48,9 @@ from tess_chat.application.use_cases.conversations import (
     UpdateConversation,
 )
 from tess_chat.application.use_cases.send_message import SendMessage
-from tess_chat.application.use_cases.usage import GetBalance, ListActivity
+from tess_chat.application.use_cases.usage import GetBalance, GetUsage, ListActivity
 from tess_chat.config import Settings, get_settings
+from tess_chat.domain.compaction import CompactionPolicy
 from tess_chat.log_config import configure_logging
 
 MODEL_LABELS = {"gemini-3.5-flash": "Gemini 3.5 Flash", "openai/gpt-oss-120b": "GPT-OSS 120B"}
@@ -77,6 +92,19 @@ def build_llm(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
     return FallbackLLMProvider(providers)
 
 
+def build_storage(settings: Settings) -> FileStorage:
+    if settings.storage_backend == "gcs":
+        return GcsFileStorage(settings.gcs_bucket)
+    return LocalFileStorage(settings.local_storage_dir)
+
+
+def build_tools(settings: Settings, client: httpx.AsyncClient) -> ToolRegistry:
+    tools: list[Tool] = [FetchUrlTool(client)]
+    if settings.tavily_api_key:
+        tools.append(WebSearchTool(client, settings.tavily_api_key))
+    return ToolRegistry(tools)
+
+
 def build_google(settings: Settings, client: httpx.AsyncClient) -> GoogleOAuth | None:
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
         return None
@@ -105,8 +133,12 @@ def build_container(
     llm: LLMProvider,
     google: GoogleOAuth | None = None,
     email: EmailSender | None = None,
+    tools: ToolRegistry | None = None,
+    storage: FileStorage | None = None,
+    tracer: Tracer | None = None,
 ) -> Container:
     clock = SystemClock()
+    storage = storage or LocalFileStorage(settings.local_storage_dir)
     sign_in = SignIn(
         uow,
         clock,
@@ -130,17 +162,33 @@ def build_container(
         update_conversation=UpdateConversation(uow, clock, models),
         delete_conversation=DeleteConversation(uow, clock),
         send_message=SendMessage(
-            uow, clock, llm, settings.max_output_tokens, settings.global_credit_cap
+            uow,
+            clock,
+            llm,
+            settings.max_output_tokens,
+            settings.global_credit_cap,
+            tools=tools or ToolRegistry(),
+            storage=storage,
+            tracer=tracer or NoopTracer(),
+            compaction=CompactionPolicy(
+                settings.compaction_threshold_tokens, settings.compaction_keep_recent
+            ),
         ),
+        upload_attachment=UploadAttachment(uow, clock, storage, PdfTextExtractor()),
+        read_attachment=ReadAttachment(uow, storage),
         get_balance=GetBalance(uow),
         list_activity=ListActivity(uow),
+        get_usage=GetUsage(uow, clock),
         models=models,
     )
 
 
 def build_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    configure_logging(settings.log_level, settings.log_json)
+    configure_logging(
+        settings.log_level, settings.log_json, [add_trace_context(settings.gcp_project_id)]
+    )
+    setup_tracing(settings.trace_exporter, settings.gcp_project_id)
     engine = create_engine(settings.async_database_url, settings.database_requires_ssl)
     bus = InProcessEventBus()
     bus.subscribe(AuditSubscriber())
@@ -157,6 +205,9 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         build_llm(settings, client),
         build_google(settings, client),
         build_email(settings),
+        build_tools(settings, client),
+        build_storage(settings),
+        OtelTracer() if settings.trace_exporter != "none" else None,
     )
 
     @asynccontextmanager
@@ -171,6 +222,7 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         cors_origins=None if settings.is_production else settings.cors_origins,
     )
     app.router.lifespan_context = lifespan
+    instrument(app, engine, settings.trace_exporter)
     return app
 
 

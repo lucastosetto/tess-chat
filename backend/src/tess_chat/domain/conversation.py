@@ -20,6 +20,8 @@ class Conversation:
     pinned_at: datetime | None = None
     archived_at: datetime | None = None
     deleted_at: datetime | None = None
+    summary: str | None = None
+    summary_until: datetime | None = None
 
     @classmethod
     def start(cls, owner_id: UUID, now: datetime, title: str | None = None) -> "Conversation":
@@ -50,6 +52,10 @@ class Conversation:
         self.archived_at = now if archived else None
         if archived:
             self.pinned_at = None
+
+    def compact(self, summary: str, until: datetime) -> None:
+        self.summary = summary
+        self.summary_until = until
 
     def touch(self, now: datetime) -> None:
         self.updated_at = now

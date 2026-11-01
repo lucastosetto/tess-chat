@@ -2,13 +2,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type Me } from '../api'
-import { Chats, Logo, Settings, SidebarIcon } from '../icons'
+import { Activity, Chats, Logo, Settings, SidebarIcon } from '../icons'
+import { ActivityPage } from './Activity'
 import { store } from '../store'
 import { ChatView } from './ChatView'
 import { Sessions } from './Sessions'
 import { GRANT, SettingsPage } from './Settings'
 
-export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'settings' }) {
+export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'settings' | 'activity' }) {
   const { conversationId } = useParams()
   const navigate = useNavigate()
   const conversations = useQuery({ queryKey: ['conversations'], queryFn: api.conversations })
@@ -55,6 +56,10 @@ export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'set
             <Chats />
             <span className="lbl">Chats</span>
           </button>
+          <button className={view === 'activity' ? 'on' : ''} title="Activity" onClick={() => open('/activity')}>
+            <Activity />
+            <span className="lbl">Activity</span>
+          </button>
           <button className={view === 'settings' ? 'on' : ''} title="Settings" onClick={() => open('/settings')}>
             <Settings />
             <span className="lbl">Settings</span>
@@ -80,18 +85,18 @@ export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'set
         </div>
       </aside>
       <section className="panel">
-        {view === 'settings' ? (
+        {view !== 'chat' ? (
           <>
             <header className="top">
               <button className="icon side-btn" onClick={() => setSideOpen(true)} aria-label="Show sidebar">
                 <SidebarIcon />
               </button>
               <div className="crumb">
-                <span className="t">Settings</span>
+                <span className="t">{view === 'settings' ? 'Settings' : 'Activity'}</span>
               </div>
             </header>
             <main className="view">
-              <SettingsPage me={me} />
+              {view === 'settings' ? <SettingsPage me={me} /> : <ActivityPage />}
             </main>
           </>
         ) : (

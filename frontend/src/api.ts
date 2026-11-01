@@ -7,10 +7,13 @@ export type Conversation = {
   effort: string | null
   pinned: boolean
   archived: boolean
+  summary_until: string | null
   created_at: string
   updated_at: string
 }
 export type Usage = { input_tokens: number; output_tokens: number; cached_input_tokens: number }
+export type ToolCall = { id: string; name: string; arguments: string; output: string; ok: boolean }
+export type Attachment = { id: string; filename: string; mime: string; size: number }
 export type Message = {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -20,9 +23,36 @@ export type Message = {
   provider: string | null
   usage: Usage
   error: string | null
+  cost: number
+  tool_calls: ToolCall[]
+  attachments: Attachment[]
   created_at: string
 }
 export type ConversationDetail = { conversation: Conversation; messages: Message[] }
+export type AuditEvent = {
+  id: string
+  at: string
+  action: string
+  subject_type: string
+  subject_id: string | null
+  payload: Record<string, unknown>
+  request_id: string | null
+  trace_id: string | null
+}
+export type DayUsage = {
+  day: string
+  replies: number
+  failed: number
+  input_tokens: number
+  output_tokens: number
+  credits: number
+  tool_calls: number
+}
+export type UsageReport = {
+  days: DayUsage[]
+  models: { model: string; replies: number; credits: number }[]
+  balance: number
+}
 export type ModelOption = { id: string; provider: string; label: string }
 export type AuthConfig = { google_login: boolean; email_login: boolean }
 
@@ -64,18 +94,33 @@ export const api = {
   createConversation: () =>
     request<Conversation>('/api/conversations', { method: 'POST', body: '{}' }),
   conversation: (id: string) => request<ConversationDetail>(`/api/conversations/${id}`),
+  activity: () => request<AuditEvent[]>('/api/activity?limit=100'),
+  usage: (days: number) => request<UsageReport>(`/api/usage?days=${days}`),
   models: () => request<ModelOption[]>('/api/models'),
   update: (id: string, changes: ConversationChanges) =>
     request<Conversation>(`/api/conversations/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(changes),
     }),
+  upload: async (file: File): Promise<Attachment> => {
+    const form = new FormData()
+    form.append('file', file)
+    const response = await fetch('/api/attachments', { method: 'POST', credentials: 'include', body: form })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new ApiError(response.status, body.error ?? 'error', body.detail)
+    }
+    return (await response.json()) as Attachment
+  },
   remove: (id: string) => request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
 }
 
 export type StreamHandlers = {
   accepted: (data: { message: Message; title: string }) => void
   delta: (data: { text: string }) => void
+  tool_started: (data: { id: string; name: string; arguments: string }) => void
+  tool_finished: (data: ToolCall) => void
+  compacted: (data: { summarized: number; cost: number; balance: number }) => void
   completed: (data: { message: Message; cost: number; balance: number }) => void
   title: (data: { title: string; cost: number; balance: number }) => void
   failed: (data: { message: Message; code: string; balance: number }) => void
@@ -85,6 +130,7 @@ export type StreamHandlers = {
 export async function streamMessage(
   conversationId: string,
   content: string,
+  attachmentIds: string[],
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -92,7 +138,7 @@ export async function streamMessage(
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, attachment_ids: attachmentIds }),
     signal,
   })
   if (!response.ok || !response.body) {

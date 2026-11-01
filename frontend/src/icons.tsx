@@ -67,3 +67,6 @@ export const Google = () => (
 export const Chevron = () => <Icon><path d="m9 6 6 6-6 6" /></Icon>
 export const ArrowDown = () => <Icon size={13}><path d="M12 5v14M5 12l7 7 7-7" /></Icon>
 export const LogOut = ({ size }: P) => <Icon size={size}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></Icon>
+export const Clip = () => <Icon><path d="m21 11-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4L15.5 7" /></Icon>
+export const FileIcon = () => <Icon size={14}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Icon>
+export const Activity = ({ size }: P) => <Icon size={size}><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></Icon>

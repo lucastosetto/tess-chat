@@ -50,6 +50,8 @@ class ConversationRow(Base):
     pinned_at: Mapped[datetime | None]
     archived_at: Mapped[datetime | None]
     deleted_at: Mapped[datetime | None]
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_until: Mapped[datetime | None]
 
 
 class MessageRow(Base):
@@ -69,6 +71,26 @@ class MessageRow(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+    cost: Mapped[int] = mapped_column(BigInteger, default=0)
+    tool_calls: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime]
+
+
+class AttachmentRow(Base):
+    __tablename__ = "attachments"
+    __table_args__ = (
+        Index("ix_attachments_message", "message_id"),
+        Index("ix_attachments_owner", "owner_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    message_id: Mapped[UUID | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
+    filename: Mapped[str] = mapped_column(String(200))
+    mime: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(String(200))
+    text: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime]
 
 
@@ -111,3 +133,4 @@ class AuditRow(Base):
     subject_id: Mapped[UUID | None]
     payload: Mapped[dict[str, Any]]
     request_id: Mapped[str | None] = mapped_column(String(64))
+    trace_id: Mapped[str | None] = mapped_column(String(32))

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from tess_chat.adapters.auth.google import GoogleOAuth
 from tess_chat.adapters.auth.session import SessionCodec
 from tess_chat.application.ports.llm import ModelOption
+from tess_chat.application.use_cases.attachments import ReadAttachment, UploadAttachment
 from tess_chat.application.use_cases.auth import (
     GetCurrentUser,
     SendLoginLink,
@@ -18,7 +19,7 @@ from tess_chat.application.use_cases.conversations import (
     UpdateConversation,
 )
 from tess_chat.application.use_cases.send_message import SendMessage
-from tess_chat.application.use_cases.usage import GetBalance, ListActivity
+from tess_chat.application.use_cases.usage import GetBalance, GetUsage, ListActivity
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,9 @@ class Container:
     update_conversation: UpdateConversation
     delete_conversation: DeleteConversation
     send_message: SendMessage
+    upload_attachment: UploadAttachment
+    read_attachment: ReadAttachment
     get_balance: GetBalance
     list_activity: ListActivity
+    get_usage: GetUsage
     models: Sequence[ModelOption]

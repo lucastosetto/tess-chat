@@ -5,6 +5,7 @@ from typing import Self
 from uuid import UUID
 
 from tess_chat.adapters.events.bus import AuditSubscriber, InProcessEventBus
+from tess_chat.domain.attachment import Attachment
 from tess_chat.domain.audit import AuditEvent
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.credits import EntryKind, LedgerEntry, ModelPrice
@@ -29,6 +30,7 @@ class Store:
         self.login_links: list[LoginLink] = []
         self.conversations: dict[UUID, Conversation] = {}
         self.messages: list[Message] = []
+        self.attachments: dict[UUID, Attachment] = {}
         self.ledger: list[LedgerEntry] = []
         self.prices: dict[str, ModelPrice] = {}
         self.audit: list[AuditEvent] = []
@@ -91,6 +93,26 @@ class MemMessages:
 
     async def add(self, message: Message) -> None:
         self.s.messages.append(message)
+        for attachment in message.attachments:
+            self.s.attachments[attachment.id].message_id = message.id
+
+
+class MemAttachments:
+    def __init__(self, store: Store) -> None:
+        self.s = store
+
+    async def add(self, attachment: Attachment) -> None:
+        self.s.attachments[attachment.id] = attachment
+
+    async def get(self, attachment_id: UUID) -> Attachment | None:
+        return self.s.attachments.get(attachment_id)
+
+    async def get_many(self, attachment_ids: Sequence[UUID]) -> Sequence[Attachment]:
+        return [
+            Attachment(**vars(self.s.attachments[i]))
+            for i in attachment_ids
+            if i in self.s.attachments
+        ]
 
 
 class MemLedger:
@@ -138,6 +160,7 @@ class MemUnitOfWork:
         self.login_links = MemLoginLinks(store)
         self.conversations = MemConversations(store)
         self.messages = MemMessages(store)
+        self.attachments = MemAttachments(store)
         self.ledger = MemLedger(store)
         self.pricing = MemPricing(store)
         self.audit = MemAudit(store)

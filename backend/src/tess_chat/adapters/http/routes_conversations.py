@@ -14,7 +14,9 @@ from tess_chat.adapters.http.schemas import (
     MessageOut,
     ModelOut,
     SendMessageIn,
+    ToolCallOut,
     UpdateConversationIn,
+    UsageReportOut,
 )
 from tess_chat.adapters.http.sse import format_event, with_heartbeat
 from tess_chat.application.use_cases.send_message import (
@@ -22,8 +24,11 @@ from tess_chat.application.use_cases.send_message import (
     AssistantDelta,
     AssistantFailed,
     ChatStreamEvent,
+    HistoryCompacted,
     MessageAccepted,
     TitleGenerated,
+    ToolFinished,
+    ToolStarted,
 )
 
 log = structlog.get_logger()
@@ -85,7 +90,9 @@ async def delete_conversation(
 async def send_message(
     conversation_id: UUID, body: SendMessageIn, user: CurrentUser, container: ContainerDep
 ) -> StreamingResponse:
-    stream = container.send_message.execute(user.id, conversation_id, body.content)
+    stream = container.send_message.execute(
+        user.id, conversation_id, body.content, body.attachment_ids
+    )
     first = await anext(stream)
 
     async def events() -> AsyncIterator[str]:
@@ -104,6 +111,11 @@ async def send_message(
     )
 
 
+@router.get("/usage")
+async def usage(user: CurrentUser, container: ContainerDep, days: int = 14) -> UsageReportOut:
+    return UsageReportOut.of(await container.get_usage.execute(user.id, days))
+
+
 @router.get("/activity")
 async def activity(
     user: CurrentUser, container: ContainerDep, limit: int = 100
@@ -120,6 +132,16 @@ def _encode(event: ChatStreamEvent) -> str:
             )
         case AssistantDelta(text):
             return format_event("delta", {"text": text})
+        case ToolStarted(call_id, name, arguments):
+            return format_event(
+                "tool_started", {"id": call_id, "name": name, "arguments": arguments}
+            )
+        case ToolFinished(invocation):
+            return format_event("tool_finished", ToolCallOut.of(invocation).model_dump(mode="json"))
+        case HistoryCompacted(summarized, cost, balance):
+            return format_event(
+                "compacted", {"summarized": summarized, "cost": cost, "balance": balance}
+            )
         case AssistantCompleted(message, cost, balance):
             return format_event(
                 "completed",

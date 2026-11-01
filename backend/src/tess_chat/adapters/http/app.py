@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from tess_chat.adapters.http import routes_auth, routes_conversations
+from tess_chat.adapters.http import routes_attachments, routes_auth, routes_conversations
 from tess_chat.adapters.http.container import Container
 from tess_chat.adapters.http.errors import install_error_handlers
 from tess_chat.adapters.http.middleware import RequestContextMiddleware
@@ -28,6 +28,7 @@ def create_app(
     install_error_handlers(app)
     app.include_router(routes_auth.router)
     app.include_router(routes_conversations.router)
+    app.include_router(routes_attachments.router)
 
     @app.get("/api/health", include_in_schema=False)
     async def health() -> dict[str, str]:

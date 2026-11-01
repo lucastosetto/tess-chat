@@ -101,6 +101,7 @@ jobs:
           gcloud run deploy "$SERVICE" \
             --image "$IMAGE:$GITHUB_SHA" \
             --region "$REGION" \
+            --update-env-vars TRACE_EXPORTER=gcp \
             --quiet
       - name: Smoke test
         run: |

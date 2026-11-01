@@ -16,9 +16,12 @@ class AuditEvent:
     subject_id: UUID | None
     payload: dict[str, Any]
     request_id: str | None
+    trace_id: str | None = None
 
     @classmethod
-    def from_domain(cls, event: DomainEvent, request_id: str | None) -> "AuditEvent":
+    def from_domain(
+        cls, event: DomainEvent, request_id: str | None, trace_id: str | None = None
+    ) -> "AuditEvent":
         return cls(
             id=uuid4(),
             at=event.occurred_at,
@@ -28,4 +31,5 @@ class AuditEvent:
             subject_id=event.subject_id,
             payload=dict(event.payload),
             request_id=request_id,
+            trace_id=trace_id,
         )

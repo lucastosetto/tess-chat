@@ -4,6 +4,7 @@ from collections.abc import Sequence
 import structlog
 
 from tess_chat.adapters.request_context import request_id_var
+from tess_chat.adapters.tracing import current_trace_id
 from tess_chat.application.ports.events import EventSubscriber
 from tess_chat.application.ports.unit_of_work import UnitOfWork
 from tess_chat.domain.audit import AuditEvent
@@ -29,7 +30,7 @@ class InProcessEventBus:
 
 class AuditSubscriber:
     async def handle(self, event: DomainEvent, uow: UnitOfWork) -> None:
-        await uow.audit.add(AuditEvent.from_domain(event, request_id_var.get()))
+        await uow.audit.add(AuditEvent.from_domain(event, request_id_var.get(), current_trace_id()))
 
 
 class LogSubscriber:

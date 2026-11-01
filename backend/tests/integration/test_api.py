@@ -1,5 +1,6 @@
 import os
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -40,15 +41,33 @@ def fake_google(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[httpx.AsyncClient]:
+async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+    async for http in make_client(tmp_path):
+        yield http
+
+
+@pytest.fixture
+async def compacting_client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+    async for http in make_client(
+        tmp_path, compaction_threshold_tokens=40, compaction_keep_recent=2
+    ):
+        yield http
+
+
+async def make_client(tmp_path: Path, **overrides: int) -> AsyncIterator[httpx.AsyncClient]:
     assert DATABASE_URL
-    settings = Settings(database_url=DATABASE_URL, app_env="test")
+    settings = Settings(
+        database_url=DATABASE_URL,
+        app_env="test",
+        local_storage_dir=str(tmp_path),
+        **overrides,  # type: ignore[arg-type]
+    )
     engine = create_engine(settings.async_database_url, settings.database_requires_ssl)
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE login_links, audit_events, credit_ledger, messages, conversations, users"
-                " CASCADE"
+                "TRUNCATE attachments, login_links, audit_events, credit_ledger, messages,"
+                " conversations, users CASCADE"
             )
         )
     bus = InProcessEventBus()
@@ -140,3 +159,65 @@ async def test_email_login(client: httpx.AsyncClient) -> None:
 
     again = await client.get(link)
     assert again.headers["location"] == "/login?error=link"
+
+
+PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00"
+    b"\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18"
+    b"\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+async def test_attachment_flow(client: httpx.AsyncClient) -> None:
+    await sign_in(client)
+    bad = await client.post("/api/attachments", files={"file": ("x.png", b"not an image")})
+    assert bad.status_code == 422
+    up = await client.post("/api/attachments", files={"file": ("dot.png", PNG, "text/plain")})
+    assert up.status_code == 201, up.text
+    attachment = up.json()
+    assert attachment["mime"] == "image/png"
+    got = await client.get(f"/api/attachments/{attachment['id']}")
+    assert got.status_code == 200 and got.content == PNG
+    conversation = (await client.post("/api/conversations", json={})).json()
+    resp = await client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "", "attachment_ids": [attachment["id"]]},
+    )
+    assert resp.status_code == 200 and "event: completed" in resp.text
+    detail = (await client.get(f"/api/conversations/{conversation['id']}")).json()
+    assert detail["messages"][0]["attachments"][0]["id"] == attachment["id"]
+    reuse = await client.post(
+        f"/api/conversations/{conversation['id']}/messages",
+        json={"content": "again", "attachment_ids": [attachment["id"]]},
+    )
+    assert "attachment already used" in reuse.text or reuse.status_code == 422
+    client.cookies.clear()
+    assert (await client.get(f"/api/attachments/{attachment['id']}")).status_code == 401
+
+
+async def test_long_conversation_is_compacted(compacting_client: httpx.AsyncClient) -> None:
+    client = compacting_client
+    await sign_in(client)
+    conversation = (await client.post("/api/conversations", json={})).json()
+    url = f"/api/conversations/{conversation['id']}/messages"
+    texts = []
+    for i in range(4):
+        texts.append((await client.post(url, json={"content": f"question {i} " * 20})).text)
+    assert any("event: compacted" in t for t in texts)
+    detail = (await client.get(f"/api/conversations/{conversation['id']}")).json()
+    assert detail["conversation"]["summary_until"] is not None
+    assert len(detail["messages"]) == 8
+    audit = (await client.get("/api/activity")).json()
+    assert any(e["action"] == "conversation.compacted" for e in audit)
+
+
+async def test_usage_report(client: httpx.AsyncClient) -> None:
+    await sign_in(client)
+    conversation = (await client.post("/api/conversations", json={})).json()
+    await client.post(f"/api/conversations/{conversation['id']}/messages", json={"content": "hi"})
+    report = (await client.get("/api/usage?days=7")).json()
+    assert len(report["days"]) == 7
+    today = report["days"][-1]
+    assert today["replies"] == 1 and today["credits"] > 0 and today["output_tokens"] > 0
+    assert report["models"][0]["model"] == "fake-model"
+    assert report["balance"] > 0

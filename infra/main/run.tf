@@ -39,6 +39,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = google_storage_bucket.attachments.name
       }
       env {
+        name  = "TRACE_EXPORTER"
+        value = "gcp"
+      }
+      env {
         name  = "GCP_PROJECT_ID"
         value = var.project_id
       }

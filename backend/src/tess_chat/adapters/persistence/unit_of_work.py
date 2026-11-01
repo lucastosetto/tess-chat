@@ -4,6 +4,7 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tess_chat.adapters.persistence.repositories import (
+    SqlAttachmentRepository,
     SqlAuditRepository,
     SqlConversationRepository,
     SqlLedgerRepository,
@@ -14,6 +15,7 @@ from tess_chat.adapters.persistence.repositories import (
 )
 from tess_chat.application.ports.events import EventBus
 from tess_chat.application.ports.repositories import (
+    AttachmentRepository,
     AuditRepository,
     ConversationRepository,
     LedgerRepository,
@@ -31,6 +33,7 @@ class SqlUnitOfWork:
     login_links: LoginLinkRepository
     conversations: ConversationRepository
     messages: MessageRepository
+    attachments: AttachmentRepository
     ledger: LedgerRepository
     pricing: PricingRepository
     audit: AuditRepository
@@ -46,6 +49,7 @@ class SqlUnitOfWork:
         self.login_links = SqlLoginLinkRepository(self._session)
         self.conversations = SqlConversationRepository(self._session)
         self.messages = SqlMessageRepository(self._session)
+        self.attachments = SqlAttachmentRepository(self._session)
         self.ledger = SqlLedgerRepository(self._session)
         self.pricing = SqlPricingRepository(self._session)
         self.audit = SqlAuditRepository(self._session)
