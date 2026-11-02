@@ -2,6 +2,10 @@
 
 Multi-conversation AI chat with streaming, credits and an audit trail. FastAPI (hexagonal) + React, deployed on Cloud Run with Neon Postgres.
 
+**Live demo:** https://tess-chat-320840833152.us-central1.run.app
+
+> The demo runs on free tiers and may be offline or out of credits. If you'd like to try it, reach out to me at morvillolucas@gmail.com and I'll bring it up for you.
+
 ## Features
 
 - Multiple conversations with SSE streaming, model picker (Gemini, Groq) with fallback, reasoning effort, LLM auto-titles.
