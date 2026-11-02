@@ -297,7 +297,9 @@ class SendMessage:
         tools: ToolRegistry,
         instructions: str | None = None,
     ) -> list[ChatTurn]:
-        system = f"{SYSTEM_PROMPT}\n\n{TOOLS_PROMPT}" if tools.specs else SYSTEM_PROMPT
+        system = f"{SYSTEM_PROMPT} Today is {self.clock.now():%A, %B %-d, %Y}."
+        if tools.specs:
+            system = f"{system}\n\n{TOOLS_PROMPT}"
         if instructions:
             system = f"{system}\n\n{AGENT_PREFIX}{instructions}"
         turns = [ChatTurn("system", system)]

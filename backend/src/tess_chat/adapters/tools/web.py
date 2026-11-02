@@ -55,7 +55,7 @@ class WebSearchTool:
         except httpx.HTTPError as exc:
             raise ToolError(f"Search failed: {exc!r}") from exc
         if resp.status_code >= 400:
-            raise ToolError(f"Search failed ({resp.status_code}).")
+            raise ToolError(f"Search failed ({resp.status_code}): {_error_detail(resp)}")
         results = resp.json().get("results") or []
         if not results:
             return "No results."
@@ -63,6 +63,16 @@ class WebSearchTool:
             f"[{i}] {r.get('title', '')}\n{r.get('url', '')}\n{r.get('content', '')}"
             for i, r in enumerate(results, 1)
         )
+
+
+def _error_detail(resp: httpx.Response) -> str:
+    try:
+        detail = resp.json().get("detail")
+    except ValueError:
+        return resp.text[:200]
+    if isinstance(detail, dict):
+        detail = detail.get("error")
+    return str(detail or "")[:200]
 
 
 class FetchUrlTool:
