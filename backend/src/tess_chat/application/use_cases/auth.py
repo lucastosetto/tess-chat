@@ -33,6 +33,9 @@ class SignIn:
                     events.user_registered(user.id, user.email),
                     events.credits_event("granted", user.id, entry.id, amount=entry.amount),
                 )
+            elif user.role != Role.ADMIN and user.email in self.admin_emails:
+                user.role = Role.ADMIN
+                await uow.users.update(user)
             uow.record(events.user_logged_in(user.id, method))
             await uow.commit()
             return user

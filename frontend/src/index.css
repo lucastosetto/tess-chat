@@ -74,6 +74,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 .top [data-tip]:hover::after, .top [data-tip]:focus-visible::after, .list-s [data-tip]:hover::after { bottom: auto; top: calc(100% + 6px); }
 .top .right [data-tip]:hover::after { left: auto; right: 0; transform: none; }
 .list-s .acts [data-tip]:hover::after { left: auto; right: 0; transform: none; }
+.side-foot [data-tip]:hover::after, .side-foot [data-tip]:focus-visible::after { left: auto; right: 0; transform: none; }
 .brand [data-tip]:hover::after, .brand [data-tip]:focus-visible::after { bottom: auto; top: calc(100% + 6px); left: 0; transform: none; }
 .composer .bar > [data-tip]:first-of-type:hover::after, .composer .bar > [data-tip]:first-of-type:focus-visible::after { left: 0; transform: none; }
 input, textarea { font: inherit; color: var(--text); background: var(--hover); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; outline: none; }
@@ -85,7 +86,7 @@ input:focus-visible, textarea:focus-visible { border-color: var(--text-3); box-s
 .splash { display: grid; place-items: center; height: 100%; color: var(--text-3); }
 
 .app { display: flex; height: 100%; }
-.side { width: 248px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 16px 10px 12px; overflow: auto; }
+.side { width: 248px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 16px 10px 12px; overflow: hidden auto; }
 .brand { display: flex; align-items: center; gap: 6px; padding: 2px 0 16px; }
 .brand .icon { width: 40px; height: 32px; }
 .wordmark { display: inline-flex; align-items: center; color: var(--text); }

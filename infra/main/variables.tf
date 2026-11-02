@@ -49,3 +49,8 @@ variable "smtp_username" {
   default     = ""
   description = "SMTP login for sign-in emails (Gmail address with an app password)"
 }
+
+variable "admin_emails" {
+  type    = list(string)
+  default = ["morvillolucas@gmail.com"]
+}

@@ -39,6 +39,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = google_storage_bucket.attachments.name
       }
       env {
+        name  = "ADMIN_EMAILS"
+        value = jsonencode(var.admin_emails)
+      }
+      env {
         name  = "TRACE_EXPORTER"
         value = "gcp"
       }

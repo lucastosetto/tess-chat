@@ -62,6 +62,9 @@ class MemUsers:
     async def add(self, user: User) -> None:
         self.s.users[user.id] = user
 
+    async def update(self, user: User) -> None:
+        self.s.users[user.id] = user
+
 
 class MemLoginLinks:
     def __init__(self, store: Store) -> None:

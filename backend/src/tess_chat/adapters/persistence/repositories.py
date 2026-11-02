@@ -63,6 +63,12 @@ class SqlUserRepository:
         )
         await self._session.flush()
 
+    async def update(self, user: User) -> None:
+        row = await self._session.get(UserRow, user.id)
+        if row is not None:
+            row.role = user.role.value
+            await self._session.flush()
+
     async def usage_overview(self, since: datetime) -> Sequence[UserUsage]:
         replies = (
             select(
