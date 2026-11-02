@@ -9,6 +9,7 @@ from sqlalchemy import text
 from tess_chat.adapters.auth.google import TOKEN_URL, GoogleOAuth
 from tess_chat.adapters.events.bus import AuditSubscriber, InProcessEventBus
 from tess_chat.adapters.http.app import create_app
+from tess_chat.adapters.http.rate_limit import RateLimiter
 from tess_chat.adapters.llm.fake import FakeLLMProvider
 from tess_chat.adapters.persistence.database import create_engine, session_factory
 from tess_chat.adapters.persistence.unit_of_work import SqlUnitOfWorkFactory
@@ -54,7 +55,15 @@ async def compacting_client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
         yield http
 
 
-async def make_client(tmp_path: Path, **overrides: int) -> AsyncIterator[httpx.AsyncClient]:
+@pytest.fixture
+async def limited_client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+    async for http in make_client(tmp_path, limits={"chat": RateLimiter(1, 60)}):
+        yield http
+
+
+async def make_client(
+    tmp_path: Path, limits: dict[str, RateLimiter] | None = None, **overrides: int
+) -> AsyncIterator[httpx.AsyncClient]:
     assert DATABASE_URL
     settings = Settings(
         database_url=DATABASE_URL,
@@ -66,8 +75,8 @@ async def make_client(tmp_path: Path, **overrides: int) -> AsyncIterator[httpx.A
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE attachments, login_links, audit_events, credit_ledger, messages,"
-                " conversations, users CASCADE"
+                "TRUNCATE share_links, mcp_servers, connections, agents, attachments,"
+                " login_links, audit_events, credit_ledger, messages, conversations, users CASCADE"
             )
         )
     bus = InProcessEventBus()
@@ -78,6 +87,7 @@ async def make_client(tmp_path: Path, **overrides: int) -> AsyncIterator[httpx.A
         FakeLLMProvider(),
         GoogleOAuth("id", "secret", httpx.AsyncClient(transport=httpx.MockTransport(fake_google))),
         OUTBOX,
+        limits=limits,
     )
     app = create_app(container)
     transport = httpx.ASGITransport(app=app)
@@ -221,3 +231,117 @@ async def test_usage_report(client: httpx.AsyncClient) -> None:
     assert today["replies"] == 1 and today["credits"] > 0 and today["output_tokens"] > 0
     assert report["models"][0]["model"] == "fake-model"
     assert report["balance"] > 0
+
+
+async def _chat(client: httpx.AsyncClient, text: str = "hello") -> str:
+    conversation = (await client.post("/api/conversations", json={"title": "Shared"})).json()
+    async with client.stream(
+        "POST", f"/api/conversations/{conversation['id']}/messages", json={"content": text}
+    ) as response:
+        await response.aread()
+    return str(conversation["id"])
+
+
+async def test_share_link_flow(client: httpx.AsyncClient, tmp_path: Path) -> None:
+    await sign_in(client)
+    attachment = (
+        await client.post("/api/attachments", files={"file": ("dot.png", PNG, "image/png")})
+    ).json()
+    conversation = (await client.post("/api/conversations", json={"title": "Shared"})).json()
+    cid = conversation["id"]
+    async with client.stream(
+        "POST",
+        f"/api/conversations/{cid}/messages",
+        json={"content": "look", "attachment_ids": [attachment["id"]]},
+    ) as response:
+        await response.aread()
+
+    created = await client.post(f"/api/conversations/{cid}/shares")
+    assert created.status_code == 201
+    share = created.json()
+    token = share["url"].rsplit("/s/", 1)[1]
+    listed = (await client.get("/api/shares")).json()
+    assert [s["id"] for s in listed] == [share["id"]] and listed[0]["url"] is None
+
+    public = httpx.AsyncClient(transport=client._transport, base_url="http://test")
+    view = await public.get(f"/api/shared/{token}")
+    assert view.status_code == 200
+    body = view.json()
+    assert body["title"] == "Shared"
+    assert [m["role"] for m in body["messages"]] == ["user", "assistant"]
+    assert "usage" not in body["messages"][1]
+    image = await public.get(f"/api/shared/{token}/attachments/{attachment['id']}")
+    assert image.status_code == 200 and image.content == PNG
+    assert (await public.get(f"/api/attachments/{attachment['id']}")).status_code == 401
+    other = (await client.post("/api/attachments", files={"file": ("b.png", PNG)})).json()
+    assert (await public.get(f"/api/shared/{token}/attachments/{other['id']}")).status_code == 404
+
+    assert (await client.delete(f"/api/shares/{share['id']}")).status_code == 204
+    assert (await public.get(f"/api/shared/{token}")).status_code == 404
+    assert (
+        await public.get(f"/api/shared/{token}/attachments/{attachment['id']}")
+    ).status_code == 404
+    actions = {e["action"] for e in (await client.get("/api/activity")).json()}
+    assert {"share.created", "share.revoked"} <= actions
+
+
+async def test_agents_export_and_admin(client: httpx.AsyncClient) -> None:
+    await sign_in(client)
+    agent = (
+        await client.post("/api/agents", json={"name": "Reviewer", "instructions": "Be terse."})
+    ).json()
+    cid = await _chat(client)
+    patched = (
+        await client.patch(f"/api/conversations/{cid}", json={"agent_id": agent["id"]})
+    ).json()
+    assert patched["agent_id"] == agent["id"]
+    renamed = await client.put(
+        f"/api/agents/{agent['id']}", json={"name": "Critic", "instructions": "Be blunt."}
+    )
+    assert renamed.json()["name"] == "Critic"
+    assert (await client.delete(f"/api/agents/{agent['id']}")).status_code == 204
+    detail = (await client.get(f"/api/conversations/{cid}")).json()
+    assert detail["conversation"]["agent_id"] is None
+
+    md = await client.get(f"/api/conversations/{cid}/export")
+    assert md.headers["content-disposition"] == 'attachment; filename="shared.md"'
+    assert "## You" in md.text
+    js = await client.get(f"/api/conversations/{cid}/export", params={"format": "json"})
+    assert js.json()["messages"][0]["content"] == "hello"
+
+    assert (await client.get("/api/admin/usage")).status_code == 403
+
+
+async def test_admin_usage(tmp_path: Path) -> None:
+    async for client in make_client(tmp_path, admin_emails=["ana@example.com"]):  # type: ignore[arg-type]
+        await sign_in(client)
+        await _chat(client)
+        report = (await client.get("/api/admin/usage")).json()
+        row = report["users"][0]
+        assert row["user"]["email"] == "ana@example.com"
+        assert row["replies"] == 1 and row["spent"] > 0 and row["conversations"] == 1
+        assert report["total_spent"] >= row["spent"]
+
+
+async def test_input_and_rate_limits(limited_client: httpx.AsyncClient) -> None:
+    await sign_in(limited_client)
+    huge = await limited_client.post("/api/agents", content=b"x" * 300_000)
+    assert huge.status_code == 413
+    await _chat(limited_client)
+    conversation = (await limited_client.post("/api/conversations", json={})).json()
+    blocked = await limited_client.post(
+        f"/api/conversations/{conversation['id']}/messages", json={"content": "again"}
+    )
+    assert blocked.status_code == 429 and int(blocked.headers["retry-after"]) > 0
+
+
+async def test_mcp_and_connections_endpoints(client: httpx.AsyncClient) -> None:
+    await sign_in(client)
+    assert (await client.get("/api/mcp-servers")).json() == []
+    refused = await client.post(
+        "/api/mcp-servers", json={"name": "local", "url": "http://127.0.0.1:1/mcp"}
+    )
+    assert refused.status_code == 422
+    connections = (await client.get("/api/connections")).json()
+    assert connections == {"google_available": False, "connections": []}
+    assert (await client.get("/api/ready")).status_code == 200

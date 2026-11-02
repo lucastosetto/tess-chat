@@ -22,6 +22,7 @@ class Conversation:
     deleted_at: datetime | None = None
     summary: str | None = None
     summary_until: datetime | None = None
+    agent_id: UUID | None = None
 
     @classmethod
     def start(cls, owner_id: UUID, now: datetime, title: str | None = None) -> "Conversation":
@@ -44,6 +45,9 @@ class Conversation:
     def choose_model(self, model: str | None, effort: str | None) -> None:
         self.model = model or None
         self.effort = effort or None
+
+    def use_agent(self, agent_id: UUID | None) -> None:
+        self.agent_id = agent_id
 
     def set_pinned(self, pinned: bool, now: datetime) -> None:
         self.pinned_at = now if pinned else None

@@ -4,24 +4,32 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tess_chat.adapters.persistence.repositories import (
+    SqlAgentRepository,
     SqlAttachmentRepository,
     SqlAuditRepository,
+    SqlConnectionRepository,
     SqlConversationRepository,
     SqlLedgerRepository,
     SqlLoginLinkRepository,
+    SqlMcpServerRepository,
     SqlMessageRepository,
     SqlPricingRepository,
+    SqlShareLinkRepository,
     SqlUserRepository,
 )
 from tess_chat.application.ports.events import EventBus
 from tess_chat.application.ports.repositories import (
+    AgentRepository,
     AttachmentRepository,
     AuditRepository,
+    ConnectionRepository,
     ConversationRepository,
     LedgerRepository,
     LoginLinkRepository,
+    McpServerRepository,
     MessageRepository,
     PricingRepository,
+    ShareLinkRepository,
     UserRepository,
 )
 from tess_chat.application.ports.unit_of_work import UnitOfWork
@@ -37,6 +45,10 @@ class SqlUnitOfWork:
     ledger: LedgerRepository
     pricing: PricingRepository
     audit: AuditRepository
+    shares: ShareLinkRepository
+    mcp_servers: McpServerRepository
+    connections: ConnectionRepository
+    agents: AgentRepository
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession], bus: EventBus) -> None:
         self._sessions = sessions
@@ -53,6 +65,10 @@ class SqlUnitOfWork:
         self.ledger = SqlLedgerRepository(self._session)
         self.pricing = SqlPricingRepository(self._session)
         self.audit = SqlAuditRepository(self._session)
+        self.shares = SqlShareLinkRepository(self._session)
+        self.mcp_servers = SqlMcpServerRepository(self._session)
+        self.connections = SqlConnectionRepository(self._session)
+        self.agents = SqlAgentRepository(self._session)
         return self
 
     async def __aexit__(

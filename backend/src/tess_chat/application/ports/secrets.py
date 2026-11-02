@@ -1,0 +1,6 @@
+from typing import Protocol
+
+
+class SecretBox(Protocol):
+    def seal(self, plaintext: str) -> str: ...
+    def open(self, sealed: str) -> str: ...

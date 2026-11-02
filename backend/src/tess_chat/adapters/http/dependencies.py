@@ -1,4 +1,5 @@
-from typing import Annotated, cast
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Any, cast
 
 from fastapi import Depends, Request
 
@@ -31,3 +32,21 @@ async def current_user(request: Request, container: ContainerDep) -> User:
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
+
+
+def rate_limit(bucket: str) -> Any:
+    async def check(request: Request, container: ContainerDep) -> None:
+        limiter = container.limits.get(bucket)
+        if limiter is None:
+            return
+        token = request.cookies.get(COOKIE_NAME)
+        user_id = container.sessions.decode(token) if token else None
+        key = str(user_id) if user_id else _client_ip(request)
+        limiter.hit(f"{bucket}:{key}")
+
+    dependency: Callable[..., Awaitable[None]] = check
+    return Depends(dependency)
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"

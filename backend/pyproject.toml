@@ -22,6 +22,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.66b2",
     "opentelemetry-instrumentation-sqlalchemy>=0.66b2",
     "opentelemetry-exporter-gcp-trace>=1.15.0",
+    "cryptography>=44",
 ]
 
 [dependency-groups]

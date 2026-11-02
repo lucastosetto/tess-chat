@@ -8,6 +8,7 @@ export type Conversation = {
   pinned: boolean
   archived: boolean
   summary_until: string | null
+  agent_id: string | null
   created_at: string
   updated_at: string
 }
@@ -59,6 +60,50 @@ export type AuthConfig = { google_login: boolean; email_login: boolean }
 export type ConversationChanges = Partial<Pick<Conversation, 'title' | 'pinned' | 'archived'>> & {
   model?: string
   effort?: string
+  agent_id?: string
+  clear_agent?: boolean
+}
+export type ShareLink = { id: string; conversation_id: string; title: string; created_at: string; url: string | null }
+export type SharedMessage = Pick<Message, 'id' | 'role' | 'content' | 'model' | 'tool_calls' | 'attachments' | 'created_at'>
+export type SharedConversation = { title: string; shared_at: string; messages: SharedMessage[] }
+export type McpServer = {
+  id: string
+  name: string
+  url: string
+  enabled: boolean
+  has_headers: boolean
+  tools: { name: string; description: string }[]
+  tools_refreshed_at: string | null
+  last_error: string | null
+  created_at: string
+}
+export type Connection = { provider: string; account: string; products: string[]; updated_at: string }
+export type Connections = { google_available: boolean; connections: Connection[] }
+export type Agent = {
+  id: string
+  name: string
+  instructions: string
+  model: string | null
+  tools: string[] | null
+  updated_at: string
+}
+export type AgentInput = { name: string; instructions: string; model: string | null; tools: string[] | null }
+export type UserUsage = {
+  user: User
+  conversations: number
+  replies: number
+  input_tokens: number
+  output_tokens: number
+  spent: number
+  balance: number
+  last_active: string | null
+}
+export type AdminUsage = {
+  days: number
+  total_spent: number
+  users: UserUsage[]
+  tools: { name: string; calls: number; failures: number }[]
+  failures: { error: string; count: number }[]
 }
 
 export class ApiError extends Error {
@@ -113,6 +158,29 @@ export const api = {
     return (await response.json()) as Attachment
   },
   remove: (id: string) => request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
+  shares: (conversationId?: string) =>
+    request<ShareLink[]>(`/api/shares${conversationId ? `?conversation_id=${conversationId}` : ''}`),
+  share: (conversationId: string) =>
+    request<ShareLink>(`/api/conversations/${conversationId}/shares`, { method: 'POST' }),
+  revokeShare: (id: string) => request<void>(`/api/shares/${id}`, { method: 'DELETE' }),
+  shared: (token: string) => request<SharedConversation>(`/api/shared/${encodeURIComponent(token)}`),
+  mcpServers: () => request<McpServer[]>('/api/mcp-servers'),
+  addMcpServer: (body: { name: string; url: string; headers: Record<string, string> }) =>
+    request<McpServer>('/api/mcp-servers', { method: 'POST', body: JSON.stringify(body) }),
+  refreshMcpServer: (id: string) => request<McpServer>(`/api/mcp-servers/${id}/refresh`, { method: 'POST' }),
+  toggleMcpServer: (id: string, enabled: boolean) =>
+    request<McpServer>(`/api/mcp-servers/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  removeMcpServer: (id: string) => request<void>(`/api/mcp-servers/${id}`, { method: 'DELETE' }),
+  connections: () => request<Connections>('/api/connections'),
+  disconnectGoogle: () => request<void>('/api/connections/google', { method: 'DELETE' }),
+  agents: () => request<Agent[]>('/api/agents'),
+  saveAgent: (body: AgentInput, id?: string) =>
+    request<Agent>(id ? `/api/agents/${id}` : '/api/agents', {
+      method: id ? 'PUT' : 'POST',
+      body: JSON.stringify(body),
+    }),
+  removeAgent: (id: string) => request<void>(`/api/agents/${id}`, { method: 'DELETE' }),
+  adminUsage: (days: number) => request<AdminUsage>(`/api/admin/usage?days=${days}`),
 }
 
 export type StreamHandlers = {
@@ -127,18 +195,21 @@ export type StreamHandlers = {
   error: (data: { code: string }) => void
 }
 
+export type SendMode = 'send' | 'edit' | 'regenerate'
+
 export async function streamMessage(
   conversationId: string,
   content: string,
   attachmentIds: string[],
   handlers: StreamHandlers,
   signal?: AbortSignal,
+  mode: SendMode = 'send',
 ): Promise<void> {
   const response = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, attachment_ids: attachmentIds }),
+    body: JSON.stringify({ content, attachment_ids: attachmentIds, mode }),
     signal,
   })
   if (!response.ok || !response.body) {

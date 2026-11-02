@@ -10,6 +10,8 @@ resource "google_project_service" "this" {
     "sts.googleapis.com",
     "cloudtrace.googleapis.com",
     "logging.googleapis.com",
+    "drive.googleapis.com",
+    "gmail.googleapis.com",
   ])
   service            = each.value
   disable_on_destroy = false

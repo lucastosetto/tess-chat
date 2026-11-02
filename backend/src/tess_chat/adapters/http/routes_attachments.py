@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import Response
 
-from tess_chat.adapters.http.dependencies import ContainerDep, CurrentUser
+from tess_chat.adapters.http.dependencies import ContainerDep, CurrentUser, rate_limit
 from tess_chat.adapters.http.schemas import AttachmentOut
 from tess_chat.domain.attachment import MAX_PDF_BYTES
 from tess_chat.domain.errors import InvalidInput
@@ -12,7 +12,7 @@ from tess_chat.domain.errors import InvalidInput
 router = APIRouter(prefix="/api/attachments", tags=["attachments"])
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[rate_limit("upload")])
 async def upload_attachment(
     user: CurrentUser, container: ContainerDep, file: Annotated[UploadFile, File()]
 ) -> AttachmentOut:

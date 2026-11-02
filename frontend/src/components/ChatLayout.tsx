@@ -1,19 +1,28 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type Me } from '../api'
-import { Activity, Chats, Logo, Settings, SidebarIcon } from '../icons'
+import { Activity, Chats, Logo, LogOut, Settings, Shield, SidebarIcon } from '../icons'
+import { AdminPage } from './Admin'
 import { ActivityPage } from './Activity'
 import { store } from '../store'
 import { ChatView } from './ChatView'
 import { Sessions } from './Sessions'
 import { GRANT, SettingsPage } from './Settings'
 
-export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'settings' | 'activity' }) {
+export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'settings' | 'activity' | 'admin' }) {
   const { conversationId } = useParams()
   const navigate = useNavigate()
   const conversations = useQuery({ queryKey: ['conversations'], queryFn: api.conversations })
   const [sideOpen, setSideOpen] = useState(false)
+  const queryClient = useQueryClient()
+  const logout = useMutation({
+    mutationFn: api.logout,
+    onSuccess: () => {
+      queryClient.clear()
+      window.location.assign('/login')
+    },
+  })
   const [mini, setMini] = useState(() => store.get('sideMini', false))
 
   useEffect(() => {
@@ -60,6 +69,12 @@ export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'set
             <Activity />
             <span className="lbl">Activity</span>
           </button>
+          {me.user.role === 'admin' && (
+            <button className={view === 'admin' ? 'on' : ''} title="Admin" onClick={() => open('/admin')}>
+              <Shield />
+              <span className="lbl">Admin</span>
+            </button>
+          )}
           <button className={view === 'settings' ? 'on' : ''} title="Settings" onClick={() => open('/settings')}>
             <Settings />
             <span className="lbl">Settings</span>
@@ -82,6 +97,16 @@ export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'set
           <div className="meter">
             <i style={{ width: `${Math.max(0, Math.min(100, (me.balance / GRANT) * 100))}%` }} />
           </div>
+          <div className="acct">
+            <span className="ava">{(me.user.name || me.user.email).slice(0, 2).toUpperCase()}</span>
+            <div className="who-txt">
+              {me.user.name || me.user.email}
+              <span>{me.user.email}</span>
+            </div>
+            <button className="icon danger" data-tip="Sign out" aria-label="Sign out" disabled={logout.isPending} onClick={() => logout.mutate()}>
+              <LogOut />
+            </button>
+          </div>
         </div>
       </aside>
       <section className="panel">
@@ -92,11 +117,11 @@ export function ChatLayout({ me, view = 'chat' }: { me: Me; view?: 'chat' | 'set
                 <SidebarIcon />
               </button>
               <div className="crumb">
-                <span className="t">{view === 'settings' ? 'Settings' : 'Activity'}</span>
+                <span className="t">{{ settings: 'Settings', activity: 'Activity', admin: 'Admin' }[view]}</span>
               </div>
             </header>
             <main className="view">
-              {view === 'settings' ? <SettingsPage me={me} /> : <ActivityPage />}
+              {view === 'settings' ? <SettingsPage me={me} /> : view === 'admin' ? <AdminPage /> : <ActivityPage />}
             </main>
           </>
         ) : (

@@ -5,6 +5,7 @@ from uuid import UUID
 from tess_chat.application.ports.clock import Clock
 from tess_chat.application.ports.llm import EFFORTS, ModelOption
 from tess_chat.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from tess_chat.application.use_cases.agents import load_agent
 from tess_chat.domain import events
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.errors import InvalidInput, NotFound
@@ -74,6 +75,8 @@ class UpdateConversation:
         archived: bool | None = None,
         model: str | None = None,
         effort: str | None = None,
+        agent_id: UUID | None = None,
+        clear_agent: bool = False,
     ) -> Conversation:
         if model and model not in {m.id for m in self.models}:
             raise InvalidInput(f"unknown model {model}")
@@ -117,6 +120,20 @@ class UpdateConversation:
                             conversation.id,
                             model=conversation.model,
                             effort=conversation.effort,
+                        )
+                    )
+            if clear_agent or agent_id is not None:
+                next_agent = None if clear_agent else agent_id
+                if next_agent is not None:
+                    await load_agent(uow, user_id, next_agent)
+                if next_agent != conversation.agent_id:
+                    conversation.use_agent(next_agent)
+                    uow.record(
+                        events.conversation_event(
+                            "agent_changed",
+                            user_id,
+                            conversation.id,
+                            agent_id=str(next_agent) if next_agent else None,
                         )
                     )
             await uow.conversations.update(conversation)

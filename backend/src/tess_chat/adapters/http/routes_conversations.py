@@ -5,7 +5,7 @@ import structlog
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from tess_chat.adapters.http.dependencies import ContainerDep, CurrentUser
+from tess_chat.adapters.http.dependencies import ContainerDep, CurrentUser, rate_limit
 from tess_chat.adapters.http.schemas import (
     AuditEventOut,
     ConversationDetailOut,
@@ -45,7 +45,7 @@ async def list_conversations(user: CurrentUser, container: ContainerDep) -> list
     return [ConversationOut.of(c) for c in await container.list_conversations.execute(user.id)]
 
 
-@router.post("/conversations", status_code=201)
+@router.post("/conversations", status_code=201, dependencies=[rate_limit("write")])
 async def create_conversation(
     body: CreateConversationIn, user: CurrentUser, container: ContainerDep
 ) -> ConversationOut:
@@ -75,6 +75,8 @@ async def update_conversation(
         body.archived,
         body.model,
         body.effort,
+        body.agent_id,
+        body.clear_agent,
     )
     return ConversationOut.of(conversation)
 
@@ -86,12 +88,12 @@ async def delete_conversation(
     await container.delete_conversation.execute(user.id, conversation_id)
 
 
-@router.post("/conversations/{conversation_id}/messages")
+@router.post("/conversations/{conversation_id}/messages", dependencies=[rate_limit("chat")])
 async def send_message(
     conversation_id: UUID, body: SendMessageIn, user: CurrentUser, container: ContainerDep
 ) -> StreamingResponse:
     stream = container.send_message.execute(
-        user.id, conversation_id, body.content, body.attachment_ids
+        user.id, conversation_id, body.content, body.attachment_ids, body.mode
     )
     first = await anext(stream)
 

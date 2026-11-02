@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from tess_chat.application.ports.llm import ToolSpec
@@ -20,6 +20,16 @@ class ToolRegistry:
     def __init__(self, tools: Sequence[Tool] = (), timeout: float = TOOL_TIMEOUT_SECONDS) -> None:
         self._tools = {tool.spec.name: tool for tool in tools}
         self._timeout = timeout
+
+    def extended(self, tools: Sequence[Tool]) -> "ToolRegistry":
+        registry = ToolRegistry((), self._timeout)
+        registry._tools = {**self._tools, **{tool.spec.name: tool for tool in tools}}
+        return registry
+
+    def only(self, allowed: Callable[[str], bool]) -> "ToolRegistry":
+        registry = ToolRegistry((), self._timeout)
+        registry._tools = {name: tool for name, tool in self._tools.items() if allowed(name)}
+        return registry
 
     @property
     def specs(self) -> list[ToolSpec]:

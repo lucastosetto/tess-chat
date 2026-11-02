@@ -2,6 +2,7 @@ import base64
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from tess_chat.application.ports.clock import Clock
@@ -18,14 +19,16 @@ from tess_chat.application.ports.llm import (
     ToolCall,
 )
 from tess_chat.application.ports.storage import FileStorage
+from tess_chat.application.ports.tools import Tool, UserToolSource
 from tess_chat.application.ports.tracing import NoopTracer, Tracer
 from tess_chat.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from tess_chat.application.tools import ToolRegistry
 from tess_chat.application.use_cases.conversations import load_owned
 from tess_chat.domain import credits, events
+from tess_chat.domain.agent import Agent
 from tess_chat.domain.attachment import MAX_PER_MESSAGE, Attachment
 from tess_chat.domain.compaction import CompactionPolicy, message_tokens
-from tess_chat.domain.conversation import DEFAULT_TITLE
+from tess_chat.domain.conversation import DEFAULT_TITLE, Conversation
 from tess_chat.domain.credits import LedgerEntry, ModelPrice, TokenUsage
 from tess_chat.domain.errors import DomainError, InvalidInput, LLMUnavailable
 from tess_chat.domain.message import Message, MessageStatus, Role, ToolInvocation
@@ -38,8 +41,10 @@ ANSWER_NUDGE = "Using the tool results above, write your answer to my previous m
 TOOLS_PROMPT = (
     "You can call tools. Use web_search for current events, facts you are unsure of, or "
     "anything after your training data, and fetch_url to read a specific page. "
-    "Cite the pages you used as Markdown links."
+    "Cite the pages you used as Markdown links. Other tools come from services the user "
+    "connected (Google Drive, Gmail, MCP servers): use them when the request is about that data."
 )
+AGENT_PREFIX = "The user configured you as the agent below. Follow its instructions.\n"
 SUMMARY_PREFIX = "Summary of the earlier part of this conversation:\n"
 AUTO_TITLE_CHARS = 60
 TITLE_PROMPT = (
@@ -138,6 +143,8 @@ class _Accepted:
     model: str | None
     effort: str | None
     first: bool
+    instructions: str | None = None
+    agent: Agent | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +162,9 @@ class _Run:
     invocations: list[ToolInvocation] = field(default_factory=list)
 
 
+SendMode = Literal["send", "edit", "regenerate"]
+
+
 @dataclass(frozen=True)
 class SendMessage:
     uow: UnitOfWorkFactory
@@ -166,6 +176,7 @@ class SendMessage:
     storage: FileStorage | None = None
     compaction: CompactionPolicy | None = None
     tracer: Tracer = field(default_factory=NoopTracer)
+    tool_sources: Sequence[UserToolSource] = ()
 
     async def execute(
         self,
@@ -173,8 +184,9 @@ class SendMessage:
         conversation_id: UUID,
         content: str,
         attachment_ids: Sequence[UUID] = (),
+        mode: SendMode = "send",
     ) -> AsyncIterator[ChatStreamEvent]:
-        accepted = await self._accept(user_id, conversation_id, content, attachment_ids)
+        accepted = await self._accept(user_id, conversation_id, content, attachment_ids, mode)
         yield MessageAccepted(accepted.user_message, accepted.title)
 
         summary, history = accepted.summary, accepted.history
@@ -186,8 +198,11 @@ class SendMessage:
 
         run = _Run()
         try:
-            turns = await self._turns(summary, history)
-            async for event in self._agent(turns, accepted, run):
+            tools = await self._tools_for(user_id)
+            if accepted.agent:
+                tools = tools.only(accepted.agent.allows)
+            turns = await self._turns(summary, history, tools, accepted.instructions)
+            async for event in self._agent(turns, accepted, run, tools):
                 yield event
         except Exception as exc:
             code = exc.code if isinstance(exc, DomainError) else "llm_error"
@@ -205,10 +220,16 @@ class SendMessage:
             if titled:
                 yield titled
 
+    async def _tools_for(self, user_id: UUID) -> ToolRegistry:
+        extra: list[Tool] = []
+        for source in self.tool_sources:
+            extra.extend(await source.tools_for(user_id))
+        return self.tools.extended(extra) if extra else self.tools
+
     async def _agent(
-        self, turns: list[ChatTurn], accepted: _Accepted, run: _Run
+        self, turns: list[ChatTurn], accepted: _Accepted, run: _Run, tools: ToolRegistry
     ) -> AsyncIterator[ChatStreamEvent]:
-        specs = self.tools.specs
+        specs = tools.specs
         has_media = any(t.has_media for t in turns)
         nudged = False
         round_index = 0
@@ -254,7 +275,7 @@ class SendMessage:
             for call in calls:
                 yield ToolStarted(call.id, call.name, call.arguments)
                 with self.tracer.span("tool.execute", tool=call.name) as span:
-                    result = await self.tools.execute(call.name, call.arguments)
+                    result = await tools.execute(call.name, call.arguments)
                     span.set_attribute("tool.ok", result.ok)
                 invocation = ToolInvocation(
                     id=call.id,
@@ -269,8 +290,16 @@ class SendMessage:
             if run.parts and not run.parts[-1].endswith("\n"):
                 run.parts.append("\n\n")
 
-    async def _turns(self, summary: str | None, messages: list[Message]) -> list[ChatTurn]:
-        system = f"{SYSTEM_PROMPT}\n\n{TOOLS_PROMPT}" if self.tools.specs else SYSTEM_PROMPT
+    async def _turns(
+        self,
+        summary: str | None,
+        messages: list[Message],
+        tools: ToolRegistry,
+        instructions: str | None = None,
+    ) -> list[ChatTurn]:
+        system = f"{SYSTEM_PROMPT}\n\n{TOOLS_PROMPT}" if tools.specs else SYSTEM_PROMPT
+        if instructions:
+            system = f"{system}\n\n{AGENT_PREFIX}{instructions}"
         turns = [ChatTurn("system", system)]
         if summary:
             turns.append(ChatTurn("system", SUMMARY_PREFIX + summary))
@@ -457,25 +486,34 @@ class SendMessage:
         conversation_id: UUID,
         content: str,
         attachment_ids: Sequence[UUID],
+        mode: SendMode = "send",
     ) -> _Accepted:
         if len(attachment_ids) > MAX_PER_MESSAGE:
             raise InvalidInput(f"at most {MAX_PER_MESSAGE} attachments per message")
         async with self.uow() as uow:
             conversation = await load_owned(uow, user_id, conversation_id)
-            attachments = await self._claim(uow, user_id, attachment_ids)
             now = self.clock.now()
-            user_message = Message.from_user(conversation_id, content, now, attachments)
-            for attachment in attachments:
-                attachment.attach_to(user_message.id)
-            stored = await uow.messages.list_for_conversation(conversation_id)
+            stored = list(await uow.messages.list_for_conversation(conversation_id))
+            if mode == "send":
+                attachments = await self._claim(uow, user_id, attachment_ids)
+                user_message = Message.from_user(conversation_id, content, now, attachments)
+                for attachment in attachments:
+                    attachment.attach_to(user_message.id)
+            else:
+                user_message, stored = await self._rewind(
+                    uow, conversation, stored, content, mode, now
+                )
+                attachments = user_message.attachments
             pending = [
                 m
                 for m in stored
                 if conversation.summary_until is None or m.created_at > conversation.summary_until
             ]
-            history = [*pending, user_message]
+            history = pending if mode == "regenerate" else [*pending, user_message]
+            agent = await uow.agents.get(conversation.agent_id) if conversation.agent_id else None
+            model = conversation.model or (agent.model if agent else None)
 
-            price = await uow.pricing.get(conversation.model or self.llm.model) or FALLBACK_PRICE
+            price = await uow.pricing.get(model or self.llm.model) or FALLBACK_PRICE
             context_tokens = sum(message_tokens(m) for m in history)
             context_tokens += credits.estimate_tokens(len(conversation.summary or ""))
             estimate = price.cost(
@@ -500,7 +538,8 @@ class SendMessage:
                 await uow.commit()
                 raise
 
-            await uow.messages.add(user_message)
+            if mode != "regenerate":
+                await uow.messages.add(user_message)
             await uow.ledger.add(reservation)
             first = conversation.title == DEFAULT_TITLE and not stored
             if first:
@@ -528,10 +567,49 @@ class SendMessage:
                 conversation.summary,
                 reservation,
                 price,
-                conversation.model,
+                model,
                 conversation.effort,
                 first,
+                agent.instructions if agent else None,
+                agent,
             )
+
+    async def _rewind(
+        self,
+        uow: UnitOfWork,
+        conversation: Conversation,
+        stored: list[Message],
+        content: str,
+        mode: SendMode,
+        now: datetime,
+    ) -> tuple[Message, list[Message]]:
+        last = next(
+            (i for i in range(len(stored) - 1, -1, -1) if stored[i].role == Role.USER), None
+        )
+        if last is None:
+            raise InvalidInput("there is no message to redo")
+        target = stored[last]
+        if conversation.summary_until and target.created_at <= conversation.summary_until:
+            raise InvalidInput("that message was already summarized")
+        keep = last + 1 if mode == "regenerate" else last
+        dropped = stored[keep:]
+        await uow.messages.supersede([m.id for m in dropped], now)
+        uow.record(
+            events.message_event(
+                "superseded",
+                conversation.owner_id,
+                target.id,
+                conversation_id=str(conversation.id),
+                mode=mode,
+                messages=len(dropped),
+            )
+        )
+        if mode == "regenerate":
+            return target, stored[:keep]
+        edited = Message.from_user(conversation.id, content, now, target.attachments)
+        if target.attachments:
+            await uow.attachments.reassign([a.id for a in target.attachments], edited.id)
+        return edited, stored[:keep]
 
     async def _claim(
         self, uow: UnitOfWork, user_id: UUID, attachment_ids: Sequence[UUID]

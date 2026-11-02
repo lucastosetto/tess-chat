@@ -1,7 +1,10 @@
+import math
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from tess_chat.adapters.http.dependencies import Unauthenticated
+from tess_chat.adapters.http.rate_limit import RateLimited
 from tess_chat.domain.errors import (
     DomainError,
     Forbidden,
@@ -29,3 +32,12 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Unauthenticated)
     async def unauthenticated(_: Request, __: Unauthenticated) -> JSONResponse:
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
+
+    @app.exception_handler(RateLimited)
+    async def rate_limited(_: Request, exc: RateLimited) -> JSONResponse:
+        retry = max(1, math.ceil(exc.retry_after))
+        return JSONResponse(
+            {"error": "rate_limited", "detail": f"too many requests; retry in {retry}s"},
+            status_code=429,
+            headers={"Retry-After": str(retry)},
+        )

@@ -84,3 +84,45 @@ def attachment_uploaded(user_id: UUID, attachment_id: UUID, mime: str, size: int
         subject_id=attachment_id,
         payload={"mime": mime, "size": size},
     )
+
+
+def share_event(action: str, user_id: UUID, link_id: UUID, **payload: Any) -> DomainEvent:
+    return DomainEvent(
+        name=f"share.{action}",
+        actor_id=user_id,
+        subject_type="share_link",
+        subject_id=link_id,
+        payload=payload,
+    )
+
+
+def mcp_event(action: str, user_id: UUID, server_id: UUID, **payload: Any) -> DomainEvent:
+    return DomainEvent(
+        name=f"mcp.{action}",
+        actor_id=user_id,
+        subject_type="mcp_server",
+        subject_id=server_id,
+        payload=payload,
+    )
+
+
+def connection_event(
+    action: str, user_id: UUID, connection_id: UUID, **payload: Any
+) -> DomainEvent:
+    return DomainEvent(
+        name=f"connection.{action}",
+        actor_id=user_id,
+        subject_type="connection",
+        subject_id=connection_id,
+        payload=payload,
+    )
+
+
+def agent_event(action: str, user_id: UUID, agent_id: UUID, **payload: Any) -> DomainEvent:
+    return DomainEvent(
+        name=f"agent.{action}",
+        actor_id=user_id,
+        subject_type="agent",
+        subject_id=agent_id,
+        payload=payload,
+    )

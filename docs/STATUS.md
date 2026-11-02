@@ -68,6 +68,24 @@ Monday 11/02 12:00 (confirmed). Everything (deployed app, docs, video) done by S
 - Auto-title by the LLM after the first reply, charged in credits, streamed as an SSE `title` event.
 - Sign-in: Google OAuth (code flow, state cookie, verified email only) and email magic link (single use, 15 min, hashed token, 5 per 15 min per email, SMTP via Gmail). Dev login removed.
 
+## Day 3 progress (11/01)
+
+- R5 share links: snapshot of the messages up to the link's creation, token stored as a hash (URL shown once), creating a new link revokes the old one, public page `/s/{token}` outside the auth gate, attachments proxied through the token, `no-store` and `noindex` headers.
+- D1 MCP: streamable HTTP client (JSON and SSE responses, `Mcp-Session-Id`, paginated `tools/list`, 2 MB cap, private IP block). Tools are cached on the server row, exposed as `mcp_{server}__{tool}`, and run through the `ToolRegistry`. Headers are encrypted. Tested against `https://mcp.deepwiki.com/mcp`.
+- D2 Google: incremental OAuth (Drive and Gmail scopes requested separately), refresh token encrypted, access token refreshed lazily; tools `drive_search`, `drive_read` (Docs, Sheets, Slides, PDF, text), `gmail_search`, `gmail_read`. Real consent not tested yet: it needs the redirect URI, scopes and APIs set up in GCP.
+- D8 custom agents: instructions, default model and allowed tool groups (`web`, `drive`, `gmail`, `mcp:{server}`, or all). Chosen from the same composer menu as the model.
+- D9 admin view (`/admin`, admins from `ADMIN_EMAILS` at sign-up): usage per user, top tools with failed calls, failed replies by error.
+- D6 regenerate the last reply and edit the last user message. Replaced messages get `superseded_at`, stay in the database for audit and are hidden from the chat, share and export; a `message.superseded` audit event is written.
+- D5 prompt caching: the system prompt and tools come first and never change inside a chat, so Gemini's implicit cache applies. Cached input tokens are read from the provider, priced at the cached rate in the ledger and shown on each reply.
+- D10 export to Markdown or JSON.
+- Hardening: rate limits per user (chat 20/min, upload 30/min, writes 60/min, public 120/min; in memory, per instance), body size limits (256 KB JSON, PDF size for uploads), Fernet secret box, `/api/ready` checks the database.
+- Migration `0006_shares_mcp_connections_agents` (also `agents.tools` and `messages.superseded_at`).
+
+## Known limits
+
+- Rate limits are per Cloud Run instance; a shared store (Redis) would be needed with more instances.
+- Google verification is pending, so only test users can grant Gmail access.
+
 ## Next
 
-- Phase 2 items from `docs/PLAN.md`.
+- Record the demo video.

@@ -1,15 +1,24 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from tess_chat.adapters.auth.google import GoogleOAuth
 from tess_chat.adapters.auth.session import SessionCodec
+from tess_chat.adapters.http.rate_limit import RateLimiter
 from tess_chat.application.ports.llm import ModelOption
+from tess_chat.application.use_cases.admin import GetAdminUsage
+from tess_chat.application.use_cases.agents import DeleteAgent, ListAgents, SaveAgent
 from tess_chat.application.use_cases.attachments import ReadAttachment, UploadAttachment
 from tess_chat.application.use_cases.auth import (
     GetCurrentUser,
     SendLoginLink,
     SignIn,
     UseLoginLink,
+)
+from tess_chat.application.use_cases.connections import (
+    CompleteGoogleConnection,
+    DisconnectGoogle,
+    GetConnections,
+    StartGoogleConnection,
 )
 from tess_chat.application.use_cases.conversations import (
     DeleteConversation,
@@ -18,7 +27,22 @@ from tess_chat.application.use_cases.conversations import (
     StartConversation,
     UpdateConversation,
 )
+from tess_chat.application.use_cases.export import ExportConversation
+from tess_chat.application.use_cases.mcp import (
+    DeleteMcpServer,
+    ListMcpServers,
+    RefreshMcpServer,
+    RegisterMcpServer,
+    UpdateMcpServer,
+)
 from tess_chat.application.use_cases.send_message import SendMessage
+from tess_chat.application.use_cases.sharing import (
+    CreateShareLink,
+    ListShareLinks,
+    ReadSharedAttachment,
+    RevokeShareLink,
+    ViewSharedConversation,
+)
 from tess_chat.application.use_cases.usage import GetBalance, GetUsage, ListActivity
 
 
@@ -43,3 +67,23 @@ class Container:
     list_activity: ListActivity
     get_usage: GetUsage
     models: Sequence[ModelOption]
+    export_conversation: ExportConversation
+    create_share: CreateShareLink
+    list_shares: ListShareLinks
+    revoke_share: RevokeShareLink
+    view_shared: ViewSharedConversation
+    read_shared_attachment: ReadSharedAttachment
+    register_mcp: RegisterMcpServer
+    list_mcp: ListMcpServers
+    refresh_mcp: RefreshMcpServer
+    update_mcp: UpdateMcpServer
+    delete_mcp: DeleteMcpServer
+    start_google: StartGoogleConnection | None
+    complete_google: CompleteGoogleConnection | None
+    get_connections: GetConnections
+    disconnect_google: DisconnectGoogle | None
+    list_agents: ListAgents
+    save_agent: SaveAgent
+    delete_agent: DeleteAgent
+    admin_usage: GetAdminUsage
+    limits: Mapping[str, RateLimiter]

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     database_ssl: bool = False
 
     session_secret: SecretStr = SecretStr("dev-insecure-session-secret-change-me")
+    secrets_key: SecretStr | None = None
     session_ttl_seconds: int = 60 * 60 * 24 * 7
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: SecretStr | None = None
@@ -59,6 +60,11 @@ class Settings(BaseSettings):
     local_storage_dir: str = ".data/attachments"
     compaction_threshold_tokens: int = 24_000
     compaction_keep_recent: int = 6
+
+    rate_limit_chat_per_minute: int = 20
+    rate_limit_upload_per_minute: int = 30
+    rate_limit_write_per_minute: int = 60
+    rate_limit_public_per_minute: int = 120
 
     static_dir: str | None = None
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])

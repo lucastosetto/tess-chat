@@ -2,26 +2,39 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tess_chat.adapters.persistence.models import (
+    AgentRow,
     AttachmentRow,
     AuditRow,
+    ConnectionRow,
     ConversationRow,
     LedgerRow,
     LoginLinkRow,
+    McpServerRow,
     MessageRow,
     ModelPricingRow,
+    ShareLinkRow,
     UserRow,
 )
-from tess_chat.application.ports.repositories import UsageRow
+from tess_chat.application.ports.repositories import (
+    FailureStat,
+    ToolStat,
+    UsageRow,
+    UserUsage,
+)
+from tess_chat.domain.agent import Agent
 from tess_chat.domain.attachment import Attachment
 from tess_chat.domain.audit import AuditEvent
+from tess_chat.domain.connection import Connection
 from tess_chat.domain.conversation import Conversation
 from tess_chat.domain.credits import EntryKind, LedgerEntry, ModelPrice, TokenUsage
 from tess_chat.domain.login_link import LoginLink
+from tess_chat.domain.mcp import McpServer, McpTool
 from tess_chat.domain.message import Message, MessageStatus, Role, ToolInvocation
+from tess_chat.domain.share import ShareLink
 from tess_chat.domain.user import Role as UserRole
 from tess_chat.domain.user import User
 
@@ -49,6 +62,69 @@ class SqlUserRepository:
             )
         )
         await self._session.flush()
+
+    async def usage_overview(self, since: datetime) -> Sequence[UserUsage]:
+        replies = (
+            select(
+                ConversationRow.owner_id.label("owner_id"),
+                func.count(func.distinct(ConversationRow.id)).label("conversations"),
+                func.count(MessageRow.id)
+                .filter(MessageRow.role == "assistant", MessageRow.status == "completed")
+                .label("replies"),
+                func.coalesce(func.sum(MessageRow.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(MessageRow.output_tokens), 0).label("output_tokens"),
+                func.max(MessageRow.created_at).label("last_active"),
+            )
+            .outerjoin(
+                MessageRow,
+                (MessageRow.conversation_id == ConversationRow.id)
+                & (MessageRow.created_at >= since),
+            )
+            .group_by(ConversationRow.owner_id)
+            .subquery()
+        )
+        ledger = (
+            select(
+                LedgerRow.user_id.label("user_id"),
+                func.coalesce(func.sum(LedgerRow.amount), 0).label("balance"),
+                func.coalesce(
+                    func.sum(LedgerRow.amount).filter(
+                        LedgerRow.kind == "settle", LedgerRow.created_at >= since
+                    ),
+                    0,
+                ).label("spent"),
+            )
+            .group_by(LedgerRow.user_id)
+            .subquery()
+        )
+        rows = await self._session.execute(
+            select(
+                UserRow,
+                func.coalesce(replies.c.conversations, 0),
+                func.coalesce(replies.c.replies, 0),
+                func.coalesce(replies.c.input_tokens, 0),
+                func.coalesce(replies.c.output_tokens, 0),
+                func.coalesce(ledger.c.spent, 0),
+                func.coalesce(ledger.c.balance, 0),
+                replies.c.last_active,
+            )
+            .outerjoin(replies, replies.c.owner_id == UserRow.id)
+            .outerjoin(ledger, ledger.c.user_id == UserRow.id)
+            .order_by(func.coalesce(ledger.c.spent, 0).asc(), UserRow.created_at)
+        )
+        return [
+            UserUsage(
+                user=_user(r[0]),
+                conversations=int(r[1]),
+                replies=int(r[2]),
+                input_tokens=int(r[3]),
+                output_tokens=int(r[4]),
+                spent=-int(r[5]),
+                balance=int(r[6]),
+                last_active=r[7],
+            )
+            for r in rows
+        ]
 
 
 class SqlLoginLinkRepository:
@@ -129,6 +205,7 @@ class SqlConversationRepository:
                 deleted_at=conversation.deleted_at,
                 summary=conversation.summary,
                 summary_until=conversation.summary_until,
+                agent_id=conversation.agent_id,
             )
         )
         await self._session.flush()
@@ -146,6 +223,7 @@ class SqlConversationRepository:
         row.deleted_at = conversation.deleted_at
         row.summary = conversation.summary
         row.summary_until = conversation.summary_until
+        row.agent_id = conversation.agent_id
 
 
 class SqlMessageRepository:
@@ -155,7 +233,9 @@ class SqlMessageRepository:
     async def list_for_conversation(self, conversation_id: UUID) -> Sequence[Message]:
         rows = await self._session.scalars(
             select(MessageRow)
-            .where(MessageRow.conversation_id == conversation_id)
+            .where(
+                MessageRow.conversation_id == conversation_id, MessageRow.superseded_at.is_(None)
+            )
             .order_by(MessageRow.created_at, MessageRow.id)
         )
         messages = [_message(row) for row in rows]
@@ -170,6 +250,38 @@ class SqlMessageRepository:
                 if row.message_id is not None:
                     by_id[row.message_id].attachments.append(_attachment(row))
         return messages
+
+    async def supersede(self, message_ids: Sequence[UUID], now: datetime) -> None:
+        if message_ids:
+            await self._session.execute(
+                update(MessageRow).where(MessageRow.id.in_(message_ids)).values(superseded_at=now)
+            )
+
+    async def tool_overview(self, since: datetime, limit: int) -> Sequence[ToolStat]:
+        call = func.jsonb_array_elements(MessageRow.tool_calls).table_valued("value").alias("call")
+        name = call.c.value.op("->>")("name")
+        failed = call.c.value.op("->>")("ok") == "false"
+        rows = await self._session.execute(
+            select(name, func.count(), func.count().filter(failed))
+            .select_from(MessageRow)
+            .join(call, true())
+            .where(MessageRow.created_at >= since)
+            .group_by(name)
+            .order_by(func.count().desc())
+            .limit(limit)
+        )
+        return [ToolStat(str(n), int(c), int(f)) for n, c, f in rows]
+
+    async def failure_overview(self, since: datetime, limit: int) -> Sequence[FailureStat]:
+        error = func.coalesce(MessageRow.error, "unknown")
+        rows = await self._session.execute(
+            select(error, func.count())
+            .where(MessageRow.status == "failed", MessageRow.created_at >= since)
+            .group_by(error)
+            .order_by(func.count().desc())
+            .limit(limit)
+        )
+        return [FailureStat(str(e), int(c)) for e, c in rows]
 
     async def usage_for_owner(self, owner_id: UUID, since: datetime) -> Sequence[UsageRow]:
         day = func.date_trunc("day", MessageRow.created_at).label("day")
@@ -249,6 +361,13 @@ class SqlAttachmentRepository:
     async def get(self, attachment_id: UUID) -> Attachment | None:
         row = await self._session.get(AttachmentRow, attachment_id)
         return _attachment(row) if row else None
+
+    async def reassign(self, attachment_ids: Sequence[UUID], message_id: UUID) -> None:
+        await self._session.execute(
+            update(AttachmentRow)
+            .where(AttachmentRow.id.in_(attachment_ids))
+            .values(message_id=message_id)
+        )
 
     async def get_many(self, attachment_ids: Sequence[UUID]) -> Sequence[Attachment]:
         if not attachment_ids:
@@ -366,6 +485,252 @@ class SqlAuditRepository:
         ]
 
 
+class SqlShareLinkRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, link: ShareLink) -> None:
+        self._session.add(
+            ShareLinkRow(
+                id=link.id,
+                conversation_id=link.conversation_id,
+                owner_id=link.owner_id,
+                token_hash=link.token_hash,
+                created_at=link.created_at,
+                revoked_at=link.revoked_at,
+            )
+        )
+        await self._session.flush()
+
+    async def get(self, link_id: UUID) -> ShareLink | None:
+        row = await self._session.get(ShareLinkRow, link_id)
+        return _share(row) if row else None
+
+    async def get_by_hash(self, token_hash: str) -> ShareLink | None:
+        row = await self._session.scalar(
+            select(ShareLinkRow).where(ShareLinkRow.token_hash == token_hash)
+        )
+        return _share(row) if row else None
+
+    async def list_active(
+        self, owner_id: UUID, conversation_id: UUID | None = None
+    ) -> Sequence[tuple[ShareLink, str]]:
+        query = (
+            select(ShareLinkRow, ConversationRow.title)
+            .join(ConversationRow, ConversationRow.id == ShareLinkRow.conversation_id)
+            .where(
+                ShareLinkRow.owner_id == owner_id,
+                ShareLinkRow.revoked_at.is_(None),
+                ConversationRow.deleted_at.is_(None),
+            )
+            .order_by(ShareLinkRow.created_at.desc())
+        )
+        if conversation_id is not None:
+            query = query.where(ShareLinkRow.conversation_id == conversation_id)
+        rows = await self._session.execute(query)
+        return [(_share(row), title) for row, title in rows]
+
+    async def update(self, link: ShareLink) -> None:
+        row = await self._session.get(ShareLinkRow, link.id)
+        if row is not None:
+            row.revoked_at = link.revoked_at
+            await self._session.flush()
+
+
+class SqlMcpServerRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, server: McpServer) -> None:
+        self._session.add(
+            McpServerRow(
+                id=server.id,
+                owner_id=server.owner_id,
+                name=server.name,
+                url=server.url,
+                sealed_headers=server.sealed_headers,
+                enabled=server.enabled,
+                tools=[_tool_json(t) for t in server.tools],
+                tools_refreshed_at=server.tools_refreshed_at,
+                last_error=server.last_error,
+                created_at=server.created_at,
+            )
+        )
+        await self._session.flush()
+
+    async def get(self, server_id: UUID) -> McpServer | None:
+        row = await self._session.get(McpServerRow, server_id)
+        return _mcp(row) if row else None
+
+    async def list_for_owner(self, owner_id: UUID) -> Sequence[McpServer]:
+        rows = await self._session.scalars(
+            select(McpServerRow)
+            .where(McpServerRow.owner_id == owner_id)
+            .order_by(McpServerRow.created_at)
+        )
+        return [_mcp(row) for row in rows]
+
+    async def update(self, server: McpServer) -> None:
+        row = await self._session.get(McpServerRow, server.id)
+        if row is None:
+            return
+        row.enabled = server.enabled
+        row.sealed_headers = server.sealed_headers
+        row.tools = [_tool_json(t) for t in server.tools]
+        row.tools_refreshed_at = server.tools_refreshed_at
+        row.last_error = server.last_error
+        await self._session.flush()
+
+    async def delete(self, server_id: UUID) -> None:
+        await self._session.execute(delete(McpServerRow).where(McpServerRow.id == server_id))
+
+
+class SqlConnectionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, owner_id: UUID, provider: str) -> Connection | None:
+        row = await self._session.scalar(
+            select(ConnectionRow).where(
+                ConnectionRow.owner_id == owner_id, ConnectionRow.provider == provider
+            )
+        )
+        if row is None:
+            return None
+        return Connection(
+            id=row.id,
+            owner_id=row.owner_id,
+            provider=row.provider,
+            account=row.account,
+            scopes=list(row.scopes or []),
+            sealed_refresh_token=row.sealed_refresh_token,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    async def add(self, connection: Connection) -> None:
+        self._session.add(
+            ConnectionRow(
+                id=connection.id,
+                owner_id=connection.owner_id,
+                provider=connection.provider,
+                account=connection.account,
+                scopes=connection.scopes,
+                sealed_refresh_token=connection.sealed_refresh_token,
+                created_at=connection.created_at,
+                updated_at=connection.updated_at,
+            )
+        )
+        await self._session.flush()
+
+    async def update(self, connection: Connection) -> None:
+        row = await self._session.get(ConnectionRow, connection.id)
+        if row is None:
+            return
+        row.account = connection.account
+        row.scopes = connection.scopes
+        row.sealed_refresh_token = connection.sealed_refresh_token
+        row.updated_at = connection.updated_at
+        await self._session.flush()
+
+    async def delete(self, connection_id: UUID) -> None:
+        await self._session.execute(delete(ConnectionRow).where(ConnectionRow.id == connection_id))
+
+
+class SqlAgentRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, agent: Agent) -> None:
+        self._session.add(
+            AgentRow(
+                id=agent.id,
+                owner_id=agent.owner_id,
+                name=agent.name,
+                instructions=agent.instructions,
+                model=agent.model,
+                tools=agent.tools,
+                created_at=agent.created_at,
+                updated_at=agent.updated_at,
+            )
+        )
+        await self._session.flush()
+
+    async def get(self, agent_id: UUID) -> Agent | None:
+        row = await self._session.get(AgentRow, agent_id)
+        return _agent(row) if row else None
+
+    async def list_for_owner(self, owner_id: UUID) -> Sequence[Agent]:
+        rows = await self._session.scalars(
+            select(AgentRow).where(AgentRow.owner_id == owner_id).order_by(AgentRow.name)
+        )
+        return [_agent(row) for row in rows]
+
+    async def update(self, agent: Agent) -> None:
+        row = await self._session.get(AgentRow, agent.id)
+        if row is None:
+            return
+        row.name = agent.name
+        row.instructions = agent.instructions
+        row.model = agent.model
+        row.tools = agent.tools
+        row.updated_at = agent.updated_at
+        await self._session.flush()
+
+    async def delete(self, agent_id: UUID) -> None:
+        await self._session.execute(delete(AgentRow).where(AgentRow.id == agent_id))
+
+
+def _share(row: ShareLinkRow) -> ShareLink:
+    return ShareLink(
+        id=row.id,
+        conversation_id=row.conversation_id,
+        owner_id=row.owner_id,
+        token_hash=row.token_hash,
+        created_at=row.created_at,
+        revoked_at=row.revoked_at,
+    )
+
+
+def _tool_json(tool: McpTool) -> dict[str, object]:
+    return {"name": tool.name, "description": tool.description, "input_schema": tool.input_schema}
+
+
+def _mcp(row: McpServerRow) -> McpServer:
+    return McpServer(
+        id=row.id,
+        owner_id=row.owner_id,
+        name=row.name,
+        url=row.url,
+        sealed_headers=row.sealed_headers,
+        enabled=row.enabled,
+        created_at=row.created_at,
+        tools=[
+            McpTool(
+                name=str(t.get("name", "")),
+                description=str(t.get("description", "")),
+                input_schema=dict(t.get("input_schema") or {}),
+            )
+            for t in row.tools or []
+        ],
+        tools_refreshed_at=row.tools_refreshed_at,
+        last_error=row.last_error,
+    )
+
+
+def _agent(row: AgentRow) -> Agent:
+    return Agent(
+        id=row.id,
+        owner_id=row.owner_id,
+        name=row.name,
+        instructions=row.instructions,
+        model=row.model,
+        tools=row.tools,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 def _user(row: UserRow) -> User:
     return User(
         id=row.id,
@@ -390,6 +755,7 @@ def _conversation(row: ConversationRow) -> Conversation:
         deleted_at=row.deleted_at,
         summary=row.summary,
         summary_until=row.summary_until,
+        agent_id=row.agent_id,
     )
 
 

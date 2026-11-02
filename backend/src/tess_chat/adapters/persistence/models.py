@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -52,6 +52,7 @@ class ConversationRow(Base):
     deleted_at: Mapped[datetime | None]
     summary: Mapped[str | None] = mapped_column(Text)
     summary_until: Mapped[datetime | None]
+    agent_id: Mapped[UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"))
 
 
 class MessageRow(Base):
@@ -74,6 +75,7 @@ class MessageRow(Base):
     cost: Mapped[int] = mapped_column(BigInteger, default=0)
     tool_calls: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime]
+    superseded_at: Mapped[datetime | None]
 
 
 class AttachmentRow(Base):
@@ -134,3 +136,61 @@ class AuditRow(Base):
     payload: Mapped[dict[str, Any]]
     request_id: Mapped[str | None] = mapped_column(String(64))
     trace_id: Mapped[str | None] = mapped_column(String(32))
+
+
+class ShareLinkRow(Base):
+    __tablename__ = "share_links"
+    __table_args__ = (Index("ix_share_links_owner", "owner_id"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE")
+    )
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime]
+    revoked_at: Mapped[datetime | None]
+
+
+class McpServerRow(Base):
+    __tablename__ = "mcp_servers"
+    __table_args__ = (Index("ix_mcp_servers_owner", "owner_id"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(40))
+    url: Mapped[str] = mapped_column(String(500))
+    sealed_headers: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    tools: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    tools_refreshed_at: Mapped[datetime | None]
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime]
+
+
+class ConnectionRow(Base):
+    __tablename__ = "connections"
+    __table_args__ = (Index("ux_connections_owner_provider", "owner_id", "provider", unique=True),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    provider: Mapped[str] = mapped_column(String(30))
+    account: Mapped[str] = mapped_column(String(320))
+    scopes: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    sealed_refresh_token: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+
+class AgentRow(Base):
+    __tablename__ = "agents"
+    __table_args__ = (Index("ix_agents_owner", "owner_id"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(80))
+    instructions: Mapped[str] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(100))
+    tools: Mapped[list[str] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]

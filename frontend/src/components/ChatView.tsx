@@ -2,8 +2,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Picker } from './Picker'
-import { api, ApiError, streamMessage, type Conversation, type Me, type Attachment, type Message, type ToolCall } from '../api'
-import { ArrowDown, Chevron, ChevronDown, Clip, Copy, FileIcon, LogoMark, NewChat, Send, SidebarIcon, Stop } from '../icons'
+import { ShareDialog } from './ShareDialog'
+import { api, ApiError, streamMessage, type Conversation, type Me, type Attachment, type Message, type SendMode, type SharedMessage, type ToolCall } from '../api'
+import { ArrowDown, Chevron, ChevronDown, Clip, Copy, FileIcon, LogoMark, NewChat, Refresh, Rename, Send, Share, SidebarIcon, Stop } from '../icons'
 import { renderMarkdown } from '../markdown'
 import { when } from '../time'
 
@@ -50,8 +51,11 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   const [liveTitle, setLiveTitle] = useState<string | undefined>()
   const [spent, setSpent] = useState<Record<string, number>>({})
   const [atBottom, setAtBottom] = useState(true)
-  const [pick, setPick] = useState({ model: '', effort: '' })
+  const [editing, setEditing] = useState(false)
+  const [pick, setPick] = useState({ model: '', effort: '', agent: '' })
   const models = useQuery({ queryKey: ['models'], queryFn: api.models, staleTime: Infinity })
+  const agents = useQuery({ queryKey: ['agents'], queryFn: api.agents })
+  const shareDialog = useRef<HTMLDialogElement>(null)
   const me = useQuery({ queryKey: ['me'], queryFn: api.me })
   const [capped, setCapped] = useState(false)
   const broke = capped || (me.data !== undefined && me.data.balance <= 0)
@@ -98,13 +102,24 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   }, [activeId])
 
   const saved = detail.data?.conversation
-  const choice = activeId && saved ? { model: saved.model ?? '', effort: saved.effort ?? '' } : pick
-  const choose = (next: { model: string; effort: string }) => {
+  const choice =
+    activeId && saved ? { model: saved.model ?? '', effort: saved.effort ?? '', agent: saved.agent_id ?? '' } : pick
+  const choose = (next: typeof pick) => {
     if (!activeId) return setPick(next)
     queryClient.setQueryData<{ conversation: Conversation; messages: Message[] }>(['conversation', activeId], (d) =>
-      d ? { ...d, conversation: { ...d.conversation, model: next.model || null, effort: next.effort || null } } : d,
+      d
+        ? {
+            ...d,
+            conversation: {
+              ...d.conversation,
+              model: next.model || null,
+              effort: next.effort || null,
+              agent_id: next.agent || null,
+            },
+          }
+        : d,
     )
-    void api.update(activeId, next).catch((err) => setError(describe(err)))
+    void api.update(activeId, changesFor(next)).catch((err) => setError(describe(err)))
   }
 
   const setBalance = (next: number) =>
@@ -131,11 +146,18 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
 
   const uploading = pending.some((p) => !p.attachment)
 
-  const send = async (text?: string, event?: FormEvent) => {
+  const send = async (text?: string, event?: FormEvent, redo?: SendMode) => {
     event?.preventDefault()
+    const mode: SendMode = redo ?? (editing ? 'edit' : 'send')
     const content = (text ?? draft).trim()
-    const attached = text === undefined ? pending : []
-    if ((!content && !attached.length) || streaming !== null || uploading || broke) return
+    const attached = text === undefined && mode === 'send' ? pending : []
+    if (mode !== 'regenerate' && !content && !attached.length) return
+    if (streaming !== null || uploading || broke) return
+    if (mode !== 'send') {
+      const lastUser = messages.map((m) => m.role).lastIndexOf('user')
+      setMessages((current) => current.slice(0, mode === 'regenerate' ? lastUser + 1 : lastUser))
+    }
+    setEditing(false)
     setDraft('')
     setPending([])
     setError(null)
@@ -149,7 +171,7 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
       if (!id) {
         const conversation = await api.createConversation()
         id = conversation.id
-        if (pick.model || pick.effort) await api.update(id, pick)
+        if (pick.model || pick.effort || pick.agent) await api.update(id, changesFor(pick))
         setActiveId(id)
       }
       const target = id
@@ -159,7 +181,7 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
         attached.map((p) => p.attachment!.id),
         {
           accepted: ({ message, title: newTitle }) => {
-            setMessages((current) => [...current, message])
+            setMessages((current) => (current.some((m) => m.id === message.id) ? current : [...current, message]))
             setLiveTitle(newTitle)
             if (target !== conversationId) navigate(`/c/${target}`, { replace: !conversationId })
             queryClient.invalidateQueries({ queryKey: ['conversations'] })
@@ -196,6 +218,7 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
           },
         },
         controller.signal,
+        mode,
       )
       queryClient.invalidateQueries({ queryKey: ['conversation', target] })
     } catch (err) {
@@ -206,6 +229,7 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
         setError(describe(err))
         setDraft(content)
         setPending(attached)
+        if (mode !== 'send') queryClient.invalidateQueries({ queryKey: ['conversation', activeId] })
       }
     } finally {
       abort.current = null
@@ -263,11 +287,17 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
               {cost.toLocaleString()} cr
             </span>
           )}
+          {activeId && messages.length > 0 && (
+            <button className="icon" onClick={() => shareDialog.current?.showModal()} data-tip="Share or export" aria-label="Share or export">
+              <Share />
+            </button>
+          )}
           <button className="icon" onClick={onNew} data-tip="New chat (⇧⌘O)" aria-label="New chat">
             <NewChat />
           </button>
         </div>
       </header>
+      {activeId && <ShareDialog ref={shareDialog} conversationId={activeId} title={heading ?? 'Chat'} />}
       <div className="convo">
         <div
           className="msgs"
@@ -299,7 +329,24 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
             )}
             {messages.map((m, i) => (
               <Fragment key={m.id}>
-                <Turn message={m} onZoom={setZoom} />
+                <Turn
+                  message={m}
+                  onZoom={setZoom}
+                  onEdit={
+                    streaming === null && m.role === 'user' && i === messages.map((x) => x.role).lastIndexOf('user')
+                      ? () => {
+                          setEditing(true)
+                          setDraft(m.content)
+                          input.current?.focus()
+                        }
+                      : undefined
+                  }
+                  onRegenerate={
+                    streaming === null && m.role === 'assistant' && i === messages.length - 1
+                      ? () => void send('', undefined, 'regenerate')
+                      : undefined
+                  }
+                />
                 {i === lastSummarized && (
                   <div className="summarized" title="Older messages are sent to the model as a summary to save context">
                     Earlier messages summarized
@@ -346,6 +393,21 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
               addFiles([...e.dataTransfer.files])
             }}
           >
+            {editing && (
+              <div className="editing">
+                Editing your last message. The reply after it will be replaced.
+                <button
+                  type="button"
+                  className="b sm ghost"
+                  onClick={() => {
+                    setEditing(false)
+                    setDraft('')
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
             {pending.length > 0 && (
               <div className="shots">
                 {pending.map((p) => (
@@ -408,11 +470,19 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
                 <Clip />
               </button>
               <Picker
-                label="Model"
-                value={choice.model}
+                label="Model or agent"
+                value={choice.agent ? `agent:${choice.agent}` : choice.model}
                 disabled={streaming !== null}
-                options={[{ value: '', label: 'Auto' }, ...(models.data ?? []).map((m) => ({ value: m.id, label: m.label }))]}
-                onChange={(model) => choose({ ...choice, model })}
+                options={[
+                  { value: '', label: 'Auto', group: 'Models' },
+                  ...(models.data ?? []).map((m) => ({ value: m.id, label: m.label, group: 'Models' })),
+                  ...(agents.data ?? []).map((a) => ({ value: `agent:${a.id}`, label: a.name, group: 'Agents' })),
+                ]}
+                onChange={(value) => {
+                  if (!value.startsWith('agent:')) return choose({ ...choice, model: value, agent: '' })
+                  const agent = agents.data?.find((a) => `agent:${a.id}` === value)
+                  if (agent) choose({ ...choice, agent: agent.id, model: agent.model ?? '' })
+                }}
               />
               <Picker
                 label="Effort"
@@ -448,7 +518,19 @@ export function ChatView({ conversationId, title, onOpenSide, onNew }: Props) {
   )
 }
 
-function Turn({ message, onZoom }: { message: Message; onZoom: (url: string) => void }) {
+function changesFor(pick: { model: string; effort: string; agent: string }) {
+  return { model: pick.model, effort: pick.effort, ...(pick.agent ? { agent_id: pick.agent } : { clear_agent: true }) }
+}
+
+type TurnProps = {
+  message: Message | SharedMessage
+  onZoom: (url: string) => void
+  files?: string
+  onEdit?: () => void
+  onRegenerate?: () => void
+}
+
+export function Turn({ message, onZoom, files = '/api/attachments', onEdit, onRegenerate }: TurnProps) {
   if (message.role === 'user') {
     return (
       <div className="turn user">
@@ -456,7 +538,7 @@ function Turn({ message, onZoom }: { message: Message; onZoom: (url: string) => 
           {message.attachments.length > 0 && (
             <div className="atts">
               {message.attachments.map((a) => {
-                const url = `/api/attachments/${a.id}`
+                const url = `${files}/${a.id}`
                 return a.mime.startsWith('image/') ? (
                   <img key={a.id} className="att" src={url} alt={a.filename} onClick={() => onZoom(url)} />
                 ) : (
@@ -471,6 +553,11 @@ function Turn({ message, onZoom }: { message: Message; onZoom: (url: string) => 
           {message.content}
         </div>
         <div className="acts">
+          {onEdit && (
+            <button className="icon" data-tip="Edit" aria-label="Edit message" onClick={onEdit}>
+              <Rename />
+            </button>
+          )}
           <span className="ago">{when(message.created_at)}</span>
         </div>
       </div>
@@ -481,7 +568,7 @@ function Turn({ message, onZoom }: { message: Message; onZoom: (url: string) => 
     <div className="turn assistant">
       {message.tool_calls.length > 0 && <Steps calls={message.tool_calls} />}
       {html && <div className="msg assistant" dangerouslySetInnerHTML={{ __html: html }} />}
-      {message.status === 'failed' && (
+      {'status' in message && message.status === 'failed' && (
         <div className="note-err">The reply failed ({message.error}). Credits were refunded.</div>
       )}
       <div className="acts">
@@ -492,10 +579,16 @@ function Turn({ message, onZoom }: { message: Message; onZoom: (url: string) => 
         >
           <Copy />
         </button>
-        {message.model && (
+        {onRegenerate && (
+          <button className="icon" data-tip="Regenerate" aria-label="Regenerate reply" onClick={onRegenerate}>
+            <Refresh />
+          </button>
+        )}
+        {'usage' in message && message.model && (
           <span className="ago">
             {message.provider} · {message.model} · {message.usage.input_tokens.toLocaleString()}→
             {message.usage.output_tokens.toLocaleString()} tok
+            {message.usage.cached_input_tokens > 0 && ` (${message.usage.cached_input_tokens.toLocaleString()} cached)`}
             {message.cost > 0 && ` · ${message.cost.toLocaleString()} cr`}
           </span>
         )}
@@ -504,12 +597,24 @@ function Turn({ message, onZoom }: { message: Message; onZoom: (url: string) => 
   )
 }
 
-const VERB: Record<string, string> = { web_search: 'Search', fetch_url: 'Fetch' }
+const VERB: Record<string, string> = {
+  web_search: 'Search',
+  fetch_url: 'Fetch',
+  drive_search: 'Drive',
+  drive_read: 'Drive',
+  gmail_search: 'Gmail',
+  gmail_read: 'Gmail',
+}
+
+function verb(name: string): string {
+  const mcp = /^mcp_(.+?)__(.+)$/.exec(name)
+  return VERB[name] ?? (mcp ? `${mcp[1]} · ${mcp[2]}` : name)
+}
 
 function target(raw: string): string {
   try {
     const args = JSON.parse(raw) as Record<string, unknown>
-    return String(args.query ?? args.url ?? Object.values(args)[0] ?? '').replace(/\s+/g, ' ')
+    return String(args.query ?? args.url ?? args.file_id ?? args.message_id ?? Object.values(args)[0] ?? '').replace(/\s+/g, ' ')
   } catch {
     return raw
   }
@@ -529,7 +634,7 @@ function Steps({ calls, running }: { calls: ToolCall[]; running?: boolean }) {
         {calls.map((call) => (
           <details key={call.id} className={`step ${call.ok ? '' : 'err'}`}>
             <summary>
-              <span className="v">{VERB[call.name] ?? call.name}</span>
+              <span className="v">{verb(call.name)}</span>
               <span className="w">{target(call.arguments)}</span>
               <span className="r">{!call.output ? '…' : call.ok ? 'done' : 'failed'}</span>
             </summary>

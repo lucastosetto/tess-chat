@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, type Me } from '../api'
 import { LogOut } from '../icons'
+import { AgentsSection, ConnectionsSection, McpSection, SharesSection } from './Integrations'
 import { applyTheme, readTheme, type Theme } from '../theme'
 
 export const GRANT = 2_000_000
@@ -71,6 +72,10 @@ export function SettingsPage({ me }: { me: Me }) {
             ))}
           </div>
         </section>
+        <ConnectionsSection />
+        <McpSection />
+        <AgentsSection />
+        <SharesSection />
         <section className="sec" aria-labelledby="h-acc">
           <div>
             <h2 id="h-acc">Account</h2>

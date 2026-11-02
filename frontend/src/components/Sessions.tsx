@@ -10,7 +10,7 @@ type Action = 'pin' | 'rename' | 'archive' | 'delete'
 
 type Changes = Partial<Pick<Conversation, 'title' | 'pinned' | 'archived'>>
 
-const RECENT = 12
+const RECENT = 8
 const KEYS: Record<string, Action> = { F2: 'rename', e: 'archive', E: 'archive', p: 'pin', P: 'pin', Backspace: 'delete', Delete: 'delete' }
 
 type Props = {

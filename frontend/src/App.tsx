@@ -1,10 +1,17 @@
 import { useQuery } from '@tanstack/react-query'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useMatch } from 'react-router-dom'
 import { api, ApiError } from './api'
 import { ChatLayout } from './components/ChatLayout'
 import { Login } from './components/Login'
+import { SharedView } from './components/SharedView'
 
 export default function App() {
+  const publicPage = useMatch('/s/:token')
+  if (publicPage) return <SharedView token={publicPage.params.token ?? ''} />
+  return <Private />
+}
+
+function Private() {
   const me = useQuery({ queryKey: ['me'], queryFn: api.me })
 
   if (me.isPending) return <div className="splash">Loading…</div>
@@ -19,6 +26,10 @@ export default function App() {
       <Route
         path="/settings"
         element={signedIn ? <ChatLayout me={me.data!} view="settings" /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/admin"
+        element={signedIn ? <ChatLayout me={me.data!} view="admin" /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/activity"
